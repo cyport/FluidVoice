@@ -2064,6 +2064,57 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    /// Whether caption text has a stroked outline (default: off — useful once
+    /// the window background is fully transparent and text needs to stay
+    /// legible over arbitrary content behind it)
+    var liveCaptionsOutlineEnabled: Bool {
+        get {
+            self.defaults.object(forKey: Keys.liveCaptionsOutlineEnabled) as? Bool ?? false
+        }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.liveCaptionsOutlineEnabled)
+            NotificationCenter.default.post(name: NSNotification.Name("LiveCaptionsAppearanceChanged"), object: nil)
+        }
+    }
+
+    /// Caption text outline color as a 6-digit hex string (default: black)
+    var liveCaptionsOutlineColorHex: String {
+        get {
+            self.defaults.string(forKey: Keys.liveCaptionsOutlineColorHex) ?? "000000"
+        }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.liveCaptionsOutlineColorHex)
+            NotificationCenter.default.post(name: NSNotification.Name("LiveCaptionsAppearanceChanged"), object: nil)
+        }
+    }
+
+    /// Whether caption text has a drop shadow (default: off)
+    var liveCaptionsShadowEnabled: Bool {
+        get {
+            self.defaults.object(forKey: Keys.liveCaptionsShadowEnabled) as? Bool ?? false
+        }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.liveCaptionsShadowEnabled)
+            NotificationCenter.default.post(name: NSNotification.Name("LiveCaptionsAppearanceChanged"), object: nil)
+        }
+    }
+
+    /// Whether captions are also published as a Syphon video source (text
+    /// only, alpha channel, no background) for compositing in other apps
+    /// on the same Mac — e.g. OBS via its Syphon plugin (default: off)
+    var liveCaptionsSyphonEnabled: Bool {
+        get {
+            self.defaults.object(forKey: Keys.liveCaptionsSyphonEnabled) as? Bool ?? false
+        }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.liveCaptionsSyphonEnabled)
+        }
+    }
+
     /// How many recent transcription characters show in overlays (default: 150)
     var transcriptionPreviewCharLimit: Int {
         get {
@@ -5087,6 +5138,10 @@ private extension SettingsStore {
         static let liveCaptionsTextColorHex = "LiveCaptionsTextColorHex"
         static let liveCaptionsBackgroundColorHex = "LiveCaptionsBackgroundColorHex"
         static let liveCaptionsBackgroundOpacity = "LiveCaptionsBackgroundOpacity"
+        static let liveCaptionsOutlineEnabled = "LiveCaptionsOutlineEnabled"
+        static let liveCaptionsOutlineColorHex = "LiveCaptionsOutlineColorHex"
+        static let liveCaptionsShadowEnabled = "LiveCaptionsShadowEnabled"
+        static let liveCaptionsSyphonEnabled = "LiveCaptionsSyphonEnabled"
 
         /// Media Playback Control
         static let pauseMediaDuringTranscription = "PauseMediaDuringTranscription"

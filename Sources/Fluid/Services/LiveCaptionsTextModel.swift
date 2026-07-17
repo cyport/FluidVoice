@@ -21,9 +21,15 @@ final class LiveCaptionsTextModel: ObservableObject {
     /// A pending word freezes once it's this many words behind the live edge,
     /// regardless of match count, so it can never get stuck dimmed forever.
     private let maxPendingDistanceFromEdge = 4
+    /// How long a committed word is kept in memory after it's scrolled off
+    /// screen. Only ever applied to words already outside the rendered
+    /// window, so this never affects what's currently visible.
+    private let offScreenRetentionInterval: TimeInterval = 10
 
     /// Full-session committed text, never mutated once written.
     private(set) var committedWords: [String] = []
+    /// Parallel to committedWords — systemUptime at the moment each word was committed.
+    private var committedWordTimestamps: [TimeInterval] = []
     private var pendingWords: [String] = []
     private var stableTicks: [Int] = []
 
@@ -71,7 +77,9 @@ final class LiveCaptionsTextModel: ObservableObject {
         var remainingTail = newTail
         var remainingTicks = newStableTicks
         if promoteCount > 0 {
+            let now = ProcessInfo.processInfo.systemUptime
             self.committedWords.append(contentsOf: remainingTail[0..<promoteCount])
+            self.committedWordTimestamps.append(contentsOf: repeatElement(now, count: promoteCount))
             remainingTail.removeFirst(promoteCount)
             remainingTicks.removeFirst(promoteCount)
         }
@@ -79,6 +87,7 @@ final class LiveCaptionsTextModel: ObservableObject {
         self.pendingWords = remainingTail
         self.stableTicks = remainingTicks
 
+        self.purgeExpiredWords()
         self.updateRenderedText()
     }
 
@@ -86,7 +95,9 @@ final class LiveCaptionsTextModel: ObservableObject {
     /// the final line isn't left half-dimmed.
     func flushAll() {
         guard !self.pendingWords.isEmpty else { return }
+        let now = ProcessInfo.processInfo.systemUptime
         self.committedWords.append(contentsOf: self.pendingWords)
+        self.committedWordTimestamps.append(contentsOf: repeatElement(now, count: self.pendingWords.count))
         self.pendingWords = []
         self.stableTicks = []
         self.updateRenderedText()
@@ -96,15 +107,41 @@ final class LiveCaptionsTextModel: ObservableObject {
     /// accumulate for a whole session, not per-utterance.
     func reset() {
         self.committedWords = []
+        self.committedWordTimestamps = []
         self.pendingWords = []
         self.stableTicks = []
         self.renderedCommittedText = ""
         self.renderedPendingText = ""
     }
 
-    private func updateRenderedText() {
+    /// Drops committed words that are both already scrolled off screen
+    /// (beyond the rendered window) and older than the retention interval,
+    /// so a long dictation session doesn't accumulate memory forever.
+    private func purgeExpiredWords() {
+        let visibleWordWindow = self.currentVisibleWordWindow()
+        let purgeableCount = max(0, self.committedWords.count - visibleWordWindow)
+        guard purgeableCount > 0 else { return }
+
+        let now = ProcessInfo.processInfo.systemUptime
+        var removeCount = 0
+        while removeCount < purgeableCount,
+              now - self.committedWordTimestamps[removeCount] > self.offScreenRetentionInterval
+        {
+            removeCount += 1
+        }
+        guard removeCount > 0 else { return }
+
+        self.committedWords.removeFirst(removeCount)
+        self.committedWordTimestamps.removeFirst(removeCount)
+    }
+
+    private func currentVisibleWordWindow() -> Int {
         let maxLines = max(min(SettingsStore.shared.liveCaptionsMaxLines, 6), 1)
-        let visibleWordWindow = max(60, maxLines * 12)
+        return max(60, maxLines * 12)
+    }
+
+    private func updateRenderedText() {
+        let visibleWordWindow = self.currentVisibleWordWindow()
 
         let pendingCount = self.pendingWords.count
         let committedNeeded = max(0, visibleWordWindow - pendingCount)

@@ -104,6 +104,13 @@ struct SettingsView: View {
         )
     }
 
+    private var liveCaptionsOutlineColorBinding: Binding<Color> {
+        Binding<Color>(
+            get: { Color(hex: self.settings.liveCaptionsOutlineColorHex) ?? .black },
+            set: { self.settings.liveCaptionsOutlineColorHex = Self.hexString(from: $0) }
+        )
+    }
+
     /// All installed macOS font families, plus the system-default sentinel first.
     private static var liveCaptionsFontFamilies: [String] {
         [SettingsStore.liveCaptionsSystemFontSentinel] + NSFontManager.shared.availableFontFamilies.sorted()
@@ -1656,6 +1663,56 @@ struct SettingsView: View {
                                     .foregroundStyle(self.settingsTertiaryText)
                                     .frame(width: 44, alignment: .trailing)
                             }
+
+                            Divider().padding(.vertical, 4)
+
+                            self.settingsToggleRow(
+                                title: "Text Outline",
+                                description: "Stroke the caption text so it stays legible over any background",
+                                isOn: Binding(
+                                    get: { self.settings.liveCaptionsOutlineEnabled },
+                                    set: { self.settings.liveCaptionsOutlineEnabled = $0 }
+                                )
+                            )
+
+                            if self.settings.liveCaptionsOutlineEnabled {
+                                HStack {
+                                    Text("Outline Color")
+                                        .font(.caption)
+                                        .foregroundStyle(self.settingsSecondaryText)
+
+                                    Spacer()
+
+                                    ColorPicker("", selection: self.liveCaptionsOutlineColorBinding, supportsOpacity: false)
+                                        .labelsHidden()
+                                        .frame(width: 44)
+                                }
+                            }
+
+                            Divider().padding(.vertical, 4)
+
+                            self.settingsToggleRow(
+                                title: "Drop Shadow",
+                                description: "Add a soft shadow behind the caption text",
+                                isOn: Binding(
+                                    get: { self.settings.liveCaptionsShadowEnabled },
+                                    set: { self.settings.liveCaptionsShadowEnabled = $0 }
+                                )
+                            )
+
+                            Divider().padding(.vertical, 4)
+
+                            self.settingsToggleRow(
+                                title: "Broadcast via Syphon",
+                                description: "Publish captions (text only, transparent) as a Syphon source for OBS and other apps on this Mac",
+                                isOn: Binding(
+                                    get: { self.settings.liveCaptionsSyphonEnabled },
+                                    set: { newValue in
+                                        self.settings.liveCaptionsSyphonEnabled = newValue
+                                        LiveCaptionsSyphonPublisher.shared.applyEnabledState()
+                                    }
+                                )
+                            )
                         }
                     }
                     .padding(16)
