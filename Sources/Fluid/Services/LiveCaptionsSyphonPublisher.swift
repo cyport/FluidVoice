@@ -6,13 +6,12 @@
 //  as a Syphon video source, so other apps on the same Mac (OBS via its
 //  Syphon plugin, VDMX, Resolume, QLab, etc.) can composite it directly.
 //
-//  Renders LiveCaptionsSyphonContentView (a separate, static view type from
-//  the live on-screen window's LiveCaptionsTextContentView) via ImageRenderer,
-//  only when the caption text actually changes rather than on a fixed timer —
-//  publishing unchanged frames at a fixed rate was found to starve the
-//  on-screen NSHostingView's own SwiftUI render pass (the window would stop
-//  showing text while Syphon was active), since both were polling/rendering
-//  concurrently on the main actor.
+//  Renders LiveCaptionsTextContentView (the same content the on-screen
+//  window uses) via ImageRenderer, only when the caption text actually
+//  changes rather than on a fixed timer — publishing unchanged frames at a
+//  fixed rate was found to starve the on-screen NSHostingView's own SwiftUI
+//  render pass, since both were polling/rendering concurrently on the main
+//  actor.
 //
 
 import Combine
@@ -32,10 +31,10 @@ final class LiveCaptionsSyphonPublisher {
     private var textureLoader: MTKTextureLoader?
     private var server: SyphonMetalServer?
     private var textChangeSubscription: AnyCancellable?
-    private let renderer: ImageRenderer<LiveCaptionsSyphonContentView>
+    private let renderer: ImageRenderer<LiveCaptionsTextContentView>
 
     private init() {
-        self.renderer = ImageRenderer(content: LiveCaptionsSyphonContentView())
+        self.renderer = ImageRenderer(content: LiveCaptionsTextContentView())
         self.renderer.isOpaque = false
         self.renderer.scale = 2
     }
@@ -92,7 +91,7 @@ final class LiveCaptionsSyphonPublisher {
               let textureLoader = self.textureLoader
         else { return }
 
-        self.renderer.content = LiveCaptionsSyphonContentView()
+        self.renderer.content = LiveCaptionsTextContentView()
 
         guard let cgImage = self.renderer.cgImage else { return }
         guard let texture = try? textureLoader.newTexture(cgImage: cgImage, options: [.SRGB: false]) else { return }

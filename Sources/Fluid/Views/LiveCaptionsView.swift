@@ -4,20 +4,11 @@
 //
 //  SwiftUI content for the Live Captions overlay. Renders committed
 //  (frozen, full-opacity) and pending (still-shifting, dimmed) caption
-//  text as one flowed paragraph.
-//
-//  Two separate content view types share the same styling (LiveCaptionsStyle)
-//  but are deliberately NOT the same View type or instance:
-//  - LiveCaptionsTextContentView: the live, on-screen window. Its true
-//    height is measured and animated so new lines push older ones up
-//    smoothly instead of jumping.
-//  - LiveCaptionsSyphonContentView: rendered off-screen via ImageRenderer
-//    for the Syphon texture publisher. No @State/animation — it's a plain
-//    per-frame snapshot. Keeping this fully separate from the live window's
-//    view (rather than reusing the same struct/instance) avoids the two
-//    concurrent SwiftUI render passes (one on-screen NSHostingView, one
-//    offscreen ImageRenderer polling at 15fps) interfering with each
-//    other's rendering/animation state.
+//  text as one flowed paragraph, clipped to a fixed-height box anchored to
+//  the bottom edge — as text grows past the visible line count, older
+//  lines are clipped off the top rather than the box reflowing. Used both
+//  by the on-screen window (LiveCaptionsView) and by the Syphon texture
+//  publisher (ImageRenderer-rendered snapshots of LiveCaptionsTextContentView).
 //
 
 import AppKit
@@ -46,8 +37,8 @@ struct LiveCaptionsView: View {
     }
 }
 
-/// Shared, non-View styling logic for both content view types — colors,
-/// font, dimensions, and the committed/pending Text builders.
+/// Shared, non-View styling logic — colors, font, dimensions, and the
+/// committed/pending Text builders.
 enum LiveCaptionsStyle {
     static let horizontalPadding: CGFloat = 16
     static let verticalPadding: CGFloat = 16
@@ -153,69 +144,22 @@ enum LiveCaptionsStyle {
     }
 }
 
-/// Text-only caption content for the on-screen window: committed (frozen,
-/// full-opacity) + pending (dimmed) words, with optional outline/drop-shadow,
-/// clipped to a measured-and-animated scrolling window. No background —
-/// fully transparent, so LiveCaptionsView can lay a background box behind it.
+/// Text-only caption content: committed (frozen, full-opacity) + pending
+/// (dimmed) words, with optional outline/drop-shadow, clipped to a
+/// fixed-height box bottom-anchored so older lines clip off the top as new
+/// ones arrive. No background — fully transparent, so LiveCaptionsView can
+/// lay a background box behind it, and the Syphon publisher can export it
+/// with alpha intact.
+///
+/// Deliberately static (no @State/GeometryReader/PreferenceKey-driven
+/// animation): an earlier version measured content height via a
+/// GeometryReader + PreferenceKey feedback loop and animated an offset for
+/// a smooth "push up" scroll effect, but the measured height reliably got
+/// stuck at 0 (confirmed by direct instrumentation of onPreferenceChange),
+/// permanently pushing all text below the visible clip bounds. A plain
+/// `.frame(alignment: .bottom).clipped()` achieves the same "last N lines,
+/// bottom-anchored" result with no measurement step required.
 struct LiveCaptionsTextContentView: View {
-    @ObservedObject private var settings = SettingsStore.shared
-    @ObservedObject private var textModel = LiveCaptionsTextModel.shared
-
-    @State private var measuredTextHeight: CGFloat = 0
-
-    private let scrollAnimationDuration: Double = 0.25
-
-    /// Positive while there are fewer than a boxful of lines (keeps text
-    /// glued to the bottom of the box); negative once content overflows the
-    /// box (pushes the excess above the top edge, where it gets clipped).
-    /// Animating this single value is what makes new lines push older ones
-    /// up smoothly instead of the box's contents jumping.
-    private var scrollOffset: CGFloat {
-        LiveCaptionsStyle.contentHeight - self.measuredTextHeight
-    }
-
-    var body: some View {
-        ZStack(alignment: .topLeading) {
-            if self.settings.liveCaptionsOutlineEnabled {
-                ForEach(Array(LiveCaptionsStyle.outlineDirections.enumerated()), id: \.offset) { _, direction in
-                    LiveCaptionsStyle.styledTextBlock(LiveCaptionsStyle.outlineText)
-                        .offset(x: direction.width * LiveCaptionsStyle.outlineWidth, y: direction.height * LiveCaptionsStyle.outlineWidth)
-                }
-            }
-
-            LiveCaptionsStyle.styledTextBlock(LiveCaptionsStyle.combinedText)
-                .shadow(
-                    color: self.settings.liveCaptionsShadowEnabled ? .black.opacity(0.55) : .clear,
-                    radius: self.settings.liveCaptionsShadowEnabled ? 2.5 : 0,
-                    x: 0,
-                    y: self.settings.liveCaptionsShadowEnabled ? 1.5 : 0
-                )
-        }
-        .background(
-            GeometryReader { proxy in
-                Color.clear
-                    .preference(key: LiveCaptionsHeightPreferenceKey.self, value: proxy.size.height)
-            }
-        )
-        .offset(y: self.scrollOffset)
-        .animation(.easeOut(duration: self.scrollAnimationDuration), value: self.measuredTextHeight)
-        .frame(width: LiveCaptionsStyle.textAreaWidth, height: LiveCaptionsStyle.contentHeight, alignment: .top)
-        .clipped()
-        .mask(LiveCaptionsStyle.topFadeMask)
-        .onPreferenceChange(LiveCaptionsHeightPreferenceKey.self) { newHeight in
-            self.measuredTextHeight = newHeight
-        }
-        .padding(.horizontal, LiveCaptionsStyle.horizontalPadding)
-        .padding(.vertical, LiveCaptionsStyle.verticalPadding)
-    }
-}
-
-/// Text-only caption content for the Syphon texture publisher. Deliberately
-/// static (no @State, no GeometryReader/PreferenceKey, no .animation) since
-/// it's re-instantiated and snapshotted fresh on every publish tick via
-/// ImageRenderer — a plain bottom-anchored clip is enough for a still frame,
-/// and avoids any live-window/animation-driver interaction.
-struct LiveCaptionsSyphonContentView: View {
     @ObservedObject private var settings = SettingsStore.shared
     @ObservedObject private var textModel = LiveCaptionsTextModel.shared
 
@@ -241,13 +185,5 @@ struct LiveCaptionsSyphonContentView: View {
         .mask(LiveCaptionsStyle.topFadeMask)
         .padding(.horizontal, LiveCaptionsStyle.horizontalPadding)
         .padding(.vertical, LiveCaptionsStyle.verticalPadding)
-    }
-}
-
-private struct LiveCaptionsHeightPreferenceKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
     }
 }
