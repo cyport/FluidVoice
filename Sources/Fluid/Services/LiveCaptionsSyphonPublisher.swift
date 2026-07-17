@@ -4,11 +4,18 @@
 //
 //  Publishes the live captions text — no background, alpha channel intact —
 //  as a Syphon video source, so other apps on the same Mac (OBS via its
-//  Syphon plugin, VDMX, Resolume, etc.) can composite it directly. Renders
-//  the same LiveCaptionsTextContentView used by the on-screen window, via
-//  ImageRenderer, so the two outputs always match.
+//  Syphon plugin, VDMX, Resolume, QLab, etc.) can composite it directly.
+//
+//  Renders LiveCaptionsSyphonContentView (a separate, static view type from
+//  the live on-screen window's LiveCaptionsTextContentView) via ImageRenderer,
+//  only when the caption text actually changes rather than on a fixed timer —
+//  publishing unchanged frames at a fixed rate was found to starve the
+//  on-screen NSHostingView's own SwiftUI render pass (the window would stop
+//  showing text while Syphon was active), since both were polling/rendering
+//  concurrently on the main actor.
 //
 
+import Combine
 import Metal
 import MetalKit
 import SwiftUI
@@ -17,18 +24,18 @@ import SwiftUI
 final class LiveCaptionsSyphonPublisher {
     static let shared = LiveCaptionsSyphonPublisher()
 
-    /// 15fps is plenty for text that updates a few times a second at most.
-    private let publishInterval: TimeInterval = 1.0 / 15.0
+    /// Coalesces rapid word-by-word updates into one render instead of one per word.
+    private let publishDebounce: TimeInterval = 0.12
 
     private var device: MTLDevice?
     private var commandQueue: MTLCommandQueue?
     private var textureLoader: MTKTextureLoader?
     private var server: SyphonMetalServer?
-    private var publishTimer: Timer?
-    private let renderer: ImageRenderer<LiveCaptionsTextContentView>
+    private var textChangeSubscription: AnyCancellable?
+    private let renderer: ImageRenderer<LiveCaptionsSyphonContentView>
 
     private init() {
-        self.renderer = ImageRenderer(content: LiveCaptionsTextContentView())
+        self.renderer = ImageRenderer(content: LiveCaptionsSyphonContentView())
         self.renderer.isOpaque = false
         self.renderer.scale = 2
     }
@@ -56,19 +63,22 @@ final class LiveCaptionsSyphonPublisher {
         self.textureLoader = MTKTextureLoader(device: device)
         self.server = SyphonMetalServer(name: "FluidVoice Live Captions", device: device, options: nil)
 
-        self.publishTimer?.invalidate()
-        let timer = Timer(timeInterval: self.publishInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
+        let textModel = LiveCaptionsTextModel.shared
+        self.textChangeSubscription = textModel.$renderedCommittedText
+            .combineLatest(textModel.$renderedPendingText)
+            .debounce(for: .seconds(self.publishDebounce), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in
                 self?.publishFrame()
             }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        self.publishTimer = timer
+
+        // Publish an initial (likely blank) frame immediately so clients see
+        // a valid source right away rather than waiting for the first word.
+        self.publishFrame()
     }
 
     private func stop() {
-        self.publishTimer?.invalidate()
-        self.publishTimer = nil
+        self.textChangeSubscription?.cancel()
+        self.textChangeSubscription = nil
         self.server?.stop()
         self.server = nil
         self.textureLoader = nil
@@ -82,10 +92,7 @@ final class LiveCaptionsSyphonPublisher {
               let textureLoader = self.textureLoader
         else { return }
 
-        // Re-point at a fresh value (not a fresh ImageRenderer) so the
-        // hosted view's @State — the scroll-offset animation — carries
-        // forward between ticks instead of resetting every frame.
-        self.renderer.content = LiveCaptionsTextContentView()
+        self.renderer.content = LiveCaptionsSyphonContentView()
 
         guard let cgImage = self.renderer.cgImage else { return }
         guard let texture = try? textureLoader.newTexture(cgImage: cgImage, options: [.SRGB: false]) else { return }
