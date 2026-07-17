@@ -103,7 +103,10 @@ final class LiveCaptionsSyphonPublisher {
         commandBuffer.commit()
     }
 
-    /// Copies a CGImage's pixel bytes directly into a new RGBA8 MTLTexture.
+    /// Copies a CGImage's pixel bytes directly into a new BGRA8 MTLTexture —
+    /// the standard native macOS video pixel format (matches
+    /// kCVPixelFormatType_32BGRA / most Syphon reference implementations),
+    /// for the widest client compatibility.
     private static func makeTexture(from cgImage: CGImage, device: MTLDevice) -> MTLTexture? {
         let width = cgImage.width
         let height = cgImage.height
@@ -112,6 +115,9 @@ final class LiveCaptionsSyphonPublisher {
         let bytesPerRow = width * 4
         var rawData = [UInt8](repeating: 0, count: height * bytesPerRow)
 
+        // premultipliedFirst + byteOrder32Little is the standard idiom for a
+        // native-BGRA 32-bit bitmap context on macOS.
+        let bitmapInfo = CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
         guard let context = CGContext(
             data: &rawData,
             width: width,
@@ -119,12 +125,12 @@ final class LiveCaptionsSyphonPublisher {
             bitsPerComponent: 8,
             bytesPerRow: bytesPerRow,
             space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            bitmapInfo: bitmapInfo
         ) else { return nil }
 
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
 
-        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: width, height: height, mipmapped: false)
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false)
         descriptor.usage = [.shaderRead]
         guard let texture = device.makeTexture(descriptor: descriptor) else { return nil }
 
