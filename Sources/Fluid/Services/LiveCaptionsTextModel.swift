@@ -26,16 +26,30 @@ final class LiveCaptionsTextModel: ObservableObject {
     /// window, so this never affects what's currently visible.
     private let offScreenRetentionInterval: TimeInterval = 10
 
-    /// Full-session committed text, never mutated once written.
-    private(set) var committedWords: [String] = []
+    /// Full-session committed words, trimmed by purgeExpiredWords() for
+    /// memory once they're off screen. NOTE: this is NOT the same as "how
+    /// many words of the ASR stream have been committed" — see
+    /// totalCommittedCount — purging must never be allowed to shrink that.
+    private var committedWords: [String] = []
     /// Parallel to committedWords — systemUptime at the moment each word was committed.
     private var committedWordTimestamps: [TimeInterval] = []
+    /// Monotonically increasing count of words committed so far, used to
+    /// slice the ASR stream's new tail. Deliberately separate from
+    /// committedWords.count, which purgeExpiredWords() can shrink — using
+    /// the array's count directly here would make purging (a memory
+    /// optimization) desync the stabilizer's position in the ASR stream,
+    /// causing already-shown, already-purged words to be mistaken for new
+    /// speech and re-inserted out of order.
+    private var totalCommittedCount = 0
+
     private var pendingWords: [String] = []
     private var stableTicks: [Int] = []
 
-    /// Capped, most-recent-window projections actually consumed by the view.
     @Published private(set) var renderedCommittedText: String = ""
     @Published private(set) var renderedPendingText: String = ""
+    /// Whether the pending (in-progress) text should start on a new line —
+    /// true when the last committed word ended a sentence.
+    @Published private(set) var pendingStartsNewLine: Bool = false
 
     private init() {}
 
@@ -43,8 +57,8 @@ final class LiveCaptionsTextModel: ObservableObject {
         let newWords = Self.tokenize(partialText)
 
         let newTail: [String]
-        if newWords.count > self.committedWords.count {
-            newTail = Array(newWords[self.committedWords.count...])
+        if newWords.count > self.totalCommittedCount {
+            newTail = Array(newWords[self.totalCommittedCount...])
         } else {
             // Already-committed words are never re-validated against fresh
             // transcriptions, so a shorter/disagreeing result simply means
@@ -80,6 +94,7 @@ final class LiveCaptionsTextModel: ObservableObject {
             let now = ProcessInfo.processInfo.systemUptime
             self.committedWords.append(contentsOf: remainingTail[0..<promoteCount])
             self.committedWordTimestamps.append(contentsOf: repeatElement(now, count: promoteCount))
+            self.totalCommittedCount += promoteCount
             remainingTail.removeFirst(promoteCount)
             remainingTicks.removeFirst(promoteCount)
         }
@@ -98,6 +113,7 @@ final class LiveCaptionsTextModel: ObservableObject {
         let now = ProcessInfo.processInfo.systemUptime
         self.committedWords.append(contentsOf: self.pendingWords)
         self.committedWordTimestamps.append(contentsOf: repeatElement(now, count: self.pendingWords.count))
+        self.totalCommittedCount += self.pendingWords.count
         self.pendingWords = []
         self.stableTicks = []
         self.updateRenderedText()
@@ -108,15 +124,20 @@ final class LiveCaptionsTextModel: ObservableObject {
     func reset() {
         self.committedWords = []
         self.committedWordTimestamps = []
+        self.totalCommittedCount = 0
         self.pendingWords = []
         self.stableTicks = []
         self.renderedCommittedText = ""
         self.renderedPendingText = ""
+        self.pendingStartsNewLine = false
     }
 
     /// Drops committed words that are both already scrolled off screen
     /// (beyond the rendered window) and older than the retention interval,
-    /// so a long dictation session doesn't accumulate memory forever.
+    /// so a long dictation session doesn't accumulate memory forever. Only
+    /// touches committedWords/committedWordTimestamps (used for rendering) —
+    /// never totalCommittedCount, which must stay in lockstep with the ASR
+    /// stream regardless of what's been purged from the display buffer.
     private func purgeExpiredWords() {
         let visibleWordWindow = self.currentVisibleWordWindow()
         let purgeableCount = max(0, self.committedWords.count - visibleWordWindow)
@@ -140,21 +161,26 @@ final class LiveCaptionsTextModel: ObservableObject {
         return max(60, maxLines * 12)
     }
 
+    /// Renders the full (purge-trimmed) committed buffer rather than a
+    /// tight suffix window recalculated every tick — the previous
+    /// suffix(committedNeeded) approach shifted the string's starting word
+    /// on nearly every tick (as pendingCount fluctuated), which reflowed
+    /// SwiftUI's word-wrap for the entire visible block, not just the new
+    /// word. Purging is comparatively rare (only once ~10s-old words have
+    /// also scrolled off screen), so this is far more stable in practice.
     private func updateRenderedText() {
-        let visibleWordWindow = self.currentVisibleWordWindow()
-
-        let pendingCount = self.pendingWords.count
-        let committedNeeded = max(0, visibleWordWindow - pendingCount)
-        let committedSlice = self.committedWords.suffix(committedNeeded)
-
-        let newCommittedText = committedSlice.joined(separator: " ")
-        let newPendingText = self.pendingWords.joined(separator: " ")
+        let newCommittedText = Self.joinWithSentenceBreaks(self.committedWords)
+        let newPendingText = Self.joinWithSentenceBreaks(self.pendingWords)
+        let newPendingStartsNewLine = self.committedWords.last.map(Self.endsSentence) ?? false
 
         if newCommittedText != self.renderedCommittedText {
             self.renderedCommittedText = newCommittedText
         }
         if newPendingText != self.renderedPendingText {
             self.renderedPendingText = newPendingText
+        }
+        if newPendingStartsNewLine != self.pendingStartsNewLine {
+            self.pendingStartsNewLine = newPendingStartsNewLine
         }
     }
 
@@ -164,5 +190,29 @@ final class LiveCaptionsTextModel: ObservableObject {
 
     private static func normalize(_ word: String) -> String {
         word.lowercased().trimmingCharacters(in: .punctuationCharacters)
+    }
+
+    /// Joins words with a space, except a hard line break after a word that
+    /// ends a sentence — so completed sentences occupy their own frozen
+    /// line and only the currently-forming sentence can still wrap/move.
+    private static func joinWithSentenceBreaks(_ words: [String]) -> String {
+        var result = ""
+        for (index, word) in words.enumerated() {
+            if index > 0 {
+                result += Self.endsSentence(words[index - 1]) ? "\n" : " "
+            }
+            result += word
+        }
+        return result
+    }
+
+    /// True if a word ends a sentence (., !, or ?), tolerating trailing
+    /// closing quotes/brackets. Doesn't attempt to handle abbreviations
+    /// ("Mr.", "e.g.") — an occasional false-positive line break there is
+    /// an acceptable trade-off for not reflowing already-shown lines.
+    private static func endsSentence(_ word: String) -> Bool {
+        let trimmed = word.trimmingCharacters(in: CharacterSet(charactersIn: "\"')]}\u{201D}\u{2019}\u{00BB}"))
+        guard let last = trimmed.last else { return false }
+        return last == "." || last == "!" || last == "?"
     }
 }

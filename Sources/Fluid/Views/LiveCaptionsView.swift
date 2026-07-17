@@ -3,12 +3,14 @@
 //  Fluid
 //
 //  SwiftUI content for the Live Captions overlay. Renders committed
-//  (frozen, full-opacity) and pending (still-shifting, dimmed) caption
-//  text as one flowed paragraph, clipped to a fixed-height box anchored to
-//  the bottom edge — as text grows past the visible line count, older
-//  lines are clipped off the top rather than the box reflowing. Used both
-//  by the on-screen window (LiveCaptionsView) and by the Syphon texture
-//  publisher (ImageRenderer-rendered snapshots of LiveCaptionsTextContentView).
+//  (frozen, full-opacity) and pending (still-shifting, dimmed) caption text
+//  as one flowed paragraph, with a hard line break after each completed
+//  sentence (so a finished sentence's line never reflows as later words are
+//  appended — see LiveCaptionsTextModel.pendingStartsNewLine), clipped to a
+//  fixed-height box that animates upward as text grows past the visible
+//  line count. Used both by the on-screen window (LiveCaptionsView) and by
+//  the Syphon texture publisher (ImageRenderer-rendered snapshots of
+//  LiveCaptionsTextContentView).
 //
 
 import AppKit
@@ -59,22 +61,25 @@ enum LiveCaptionsStyle {
         Color(hex: SettingsStore.shared.liveCaptionsOutlineColorHex) ?? .black
     }
 
-    static var font: Font {
+    /// Font.custom(_:size:) expects a font's PostScript name, not its family
+    /// name, and those differ for most third-party fonts (e.g. family
+    /// "Hitmarker Text" -> PostScript name "HitmarkerText-Regular").
+    /// NSFontManager resolves by family correctly regardless of naming, so
+    /// resolve to an NSFont here (also reused directly for text-height
+    /// measurement below) and bridge to SwiftUI, with a safe fallback if the
+    /// family can't be resolved (e.g. no longer installed).
+    static var nsFont: NSFont {
         let family = SettingsStore.shared.liveCaptionsFontFamily
         let size = SettingsStore.shared.liveCaptionsFontSize
         guard family != SettingsStore.liveCaptionsSystemFontSentinel else {
-            return .system(size: size, weight: .semibold)
+            return .systemFont(ofSize: size, weight: .semibold)
         }
-        // Font.custom(_:size:) expects a font's PostScript name, not its
-        // family name, and those differ for most third-party fonts (e.g.
-        // family "Hitmarker Text" -> PostScript name "HitmarkerText-Regular").
-        // NSFontManager resolves by family correctly regardless of naming,
-        // so go through NSFont and bridge to SwiftUI, with a safe fallback
-        // if the family can't be resolved (e.g. no longer installed).
-        if let nsFont = NSFontManager.shared.font(withFamily: family, traits: [], weight: 5, size: size) {
-            return Font(nsFont)
-        }
-        return .system(size: size, weight: .semibold)
+        return NSFontManager.shared.font(withFamily: family, traits: [], weight: 5, size: size)
+            ?? .systemFont(ofSize: size, weight: .semibold)
+    }
+
+    static var font: Font {
+        Font(self.nsFont)
     }
 
     static var lineHeight: CGFloat {
@@ -99,6 +104,14 @@ enum LiveCaptionsStyle {
             .foregroundColor(self.textColor.opacity(0.55))
     }
 
+    /// " " or "\n" between the committed and pending text — a hard line
+    /// break when the last committed word ended a sentence, so a freshly
+    /// started sentence begins on its own line instead of continuing the
+    /// previous (already-frozen) one.
+    private static var pendingConnector: Text {
+        Text(LiveCaptionsTextModel.shared.pendingStartsNewLine ? "\n" : " ")
+    }
+
     static var combinedText: Text {
         let committed = LiveCaptionsTextModel.shared.renderedCommittedText
         let pending = LiveCaptionsTextModel.shared.renderedPendingText
@@ -107,7 +120,7 @@ enum LiveCaptionsStyle {
         } else if pending.isEmpty {
             return self.committedText
         } else {
-            return self.committedText + Text(" ") + self.pendingText
+            return self.committedText + self.pendingConnector + self.pendingText
         }
     }
 
@@ -116,8 +129,47 @@ enum LiveCaptionsStyle {
     static var outlineText: Text {
         let committed = LiveCaptionsTextModel.shared.renderedCommittedText
         let pending = LiveCaptionsTextModel.shared.renderedPendingText
-        let combined = [committed, pending].filter { !$0.isEmpty }.joined(separator: " ")
-        return Text(combined).foregroundColor(self.outlineColor)
+        if committed.isEmpty {
+            return Text(pending).foregroundColor(self.outlineColor)
+        } else if pending.isEmpty {
+            return Text(committed).foregroundColor(self.outlineColor)
+        } else {
+            let connector = LiveCaptionsTextModel.shared.pendingStartsNewLine ? "\n" : " "
+            return Text(committed + connector + pending).foregroundColor(self.outlineColor)
+        }
+    }
+
+    /// Plain (unstyled) concatenation of committed + connector + pending,
+    /// for text-height measurement — not for display.
+    static var combinedPlainString: String {
+        let committed = LiveCaptionsTextModel.shared.renderedCommittedText
+        let pending = LiveCaptionsTextModel.shared.renderedPendingText
+        if committed.isEmpty { return pending }
+        if pending.isEmpty { return committed }
+        let connector = LiveCaptionsTextModel.shared.pendingStartsNewLine ? "\n" : " "
+        return committed + connector + pending
+    }
+
+    /// Synchronously measures the wrapped height of `text` at the current
+    /// font/width, via NSAttributedString/NSString text layout rather than
+    /// a SwiftUI GeometryReader — computed fresh on every call from the
+    /// current text content, so (unlike the GeometryReader + PreferenceKey
+    /// approach tried previously) there's no asynchronous feedback loop
+    /// that can get stuck: the result is always correct as of this call.
+    static func measuredHeight(for text: String) -> CGFloat {
+        guard !text.isEmpty else { return 0 }
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineSpacing = 4
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: self.nsFont,
+            .paragraphStyle: paragraphStyle,
+        ]
+        let bounds = (text as NSString).boundingRect(
+            with: CGSize(width: self.textAreaWidth, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: attributes
+        )
+        return ceil(bounds.height)
     }
 
     /// Soft fade on the topmost (possibly partially-clipped) line, matching
@@ -146,25 +198,39 @@ enum LiveCaptionsStyle {
 
 /// Text-only caption content: committed (frozen, full-opacity) + pending
 /// (dimmed) words, with optional outline/drop-shadow, clipped to a
-/// fixed-height box bottom-anchored so older lines clip off the top as new
-/// ones arrive. No background — fully transparent, so LiveCaptionsView can
-/// lay a background box behind it, and the Syphon publisher can export it
-/// with alpha intact.
+/// fixed-height box — as text grows past the visible line count, the block
+/// is offset upward (animated) so older lines scroll off the top smoothly.
+/// No background — fully transparent, so LiveCaptionsView can lay a
+/// background box behind it, and the Syphon publisher can export it with
+/// alpha intact.
 ///
-/// Deliberately static (no @State/GeometryReader/PreferenceKey-driven
-/// animation): an earlier version measured content height via a
-/// GeometryReader + PreferenceKey feedback loop and animated an offset for
-/// a smooth "push up" scroll effect, but the measured height reliably got
-/// stuck at 0 (confirmed by direct instrumentation of onPreferenceChange),
-/// permanently pushing all text below the visible clip bounds. A plain
-/// `.frame(alignment: .bottom).clipped()` achieves the same "last N lines,
-/// bottom-anchored" result with no measurement step required.
+/// The offset is driven by LiveCaptionsStyle.measuredHeight(for:), a
+/// synchronous NSAttributedString-based text measurement — NOT a SwiftUI
+/// GeometryReader + PreferenceKey feedback loop (an earlier version used
+/// that and the measured height reliably got stuck at 0, confirmed by
+/// direct instrumentation, permanently pushing all text below the visible
+/// clip bounds). Since the measurement here is computed synchronously from
+/// the current text on every body evaluation, there's no async step that
+/// can get stuck.
 struct LiveCaptionsTextContentView: View {
     @ObservedObject private var settings = SettingsStore.shared
     @ObservedObject private var textModel = LiveCaptionsTextModel.shared
 
+    private let scrollAnimationDuration: Double = 0.25
+
+    private var measuredHeight: CGFloat {
+        LiveCaptionsStyle.measuredHeight(for: LiveCaptionsStyle.combinedPlainString)
+    }
+
+    /// Positive while there's less than a boxful of text (keeps it glued to
+    /// the bottom of the box); negative once content overflows the box
+    /// (pushes the excess above the top edge, where it gets clipped).
+    private var scrollOffset: CGFloat {
+        LiveCaptionsStyle.contentHeight - self.measuredHeight
+    }
+
     var body: some View {
-        ZStack(alignment: .bottomLeading) {
+        ZStack(alignment: .topLeading) {
             if self.settings.liveCaptionsOutlineEnabled {
                 ForEach(Array(LiveCaptionsStyle.outlineDirections.enumerated()), id: \.offset) { _, direction in
                     LiveCaptionsStyle.styledTextBlock(LiveCaptionsStyle.outlineText)
@@ -180,7 +246,9 @@ struct LiveCaptionsTextContentView: View {
                     y: self.settings.liveCaptionsShadowEnabled ? 1.5 : 0
                 )
         }
-        .frame(width: LiveCaptionsStyle.textAreaWidth, height: LiveCaptionsStyle.contentHeight, alignment: .bottom)
+        .offset(y: self.scrollOffset)
+        .animation(.easeOut(duration: self.scrollAnimationDuration), value: self.measuredHeight)
+        .frame(width: LiveCaptionsStyle.textAreaWidth, height: LiveCaptionsStyle.contentHeight, alignment: .top)
         .clipped()
         .mask(LiveCaptionsStyle.topFadeMask)
         .padding(.horizontal, LiveCaptionsStyle.horizontalPadding)
