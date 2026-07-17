@@ -18,6 +18,14 @@
 //  the latter reliably fails ("Image decoding failed") for SwiftUI-rendered
 //  CGImages, a known rough edge of its CGImage decoder.
 //
+//  Creates a fresh ImageRenderer per publish rather than reusing one
+//  instance and reassigning .content — reassigning content on a reused
+//  renderer isn't guaranteed to be reflected the moment .cgImage is read
+//  right after, which showed up as the Syphon output visibly lagging
+//  behind the on-screen window. LiveCaptionsTextContentView holds no state
+//  worth preserving across renders (it's purely computed from the text
+//  model), so there's no downside to a fresh instance each time.
+//
 
 import Combine
 import CoreGraphics
@@ -29,19 +37,14 @@ final class LiveCaptionsSyphonPublisher {
     static let shared = LiveCaptionsSyphonPublisher()
 
     /// Coalesces rapid word-by-word updates into one render instead of one per word.
-    private let publishDebounce: TimeInterval = 0.12
+    private let publishDebounce: TimeInterval = 0.05
 
     private var device: MTLDevice?
     private var commandQueue: MTLCommandQueue?
     private var server: SyphonMetalServer?
     private var textChangeSubscription: AnyCancellable?
-    private let renderer: ImageRenderer<LiveCaptionsTextContentView>
 
-    private init() {
-        self.renderer = ImageRenderer(content: LiveCaptionsTextContentView())
-        self.renderer.isOpaque = false
-        self.renderer.scale = 2
-    }
+    private init() {}
 
     /// Starts or stops the Syphon server to match the current setting. Safe
     /// to call any time — app launch, or whenever the setting changes.
@@ -90,9 +93,11 @@ final class LiveCaptionsSyphonPublisher {
     private func publishFrame() {
         guard let server = self.server, let commandQueue = self.commandQueue, let device = self.device else { return }
 
-        self.renderer.content = LiveCaptionsTextContentView()
+        let renderer = ImageRenderer(content: LiveCaptionsTextContentView())
+        renderer.isOpaque = false
+        renderer.scale = 2
 
-        guard let cgImage = self.renderer.cgImage,
+        guard let cgImage = renderer.cgImage,
               let texture = Self.makeTexture(from: cgImage, device: device)
         else { return }
 
