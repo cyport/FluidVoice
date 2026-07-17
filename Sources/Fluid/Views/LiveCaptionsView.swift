@@ -20,6 +20,7 @@
 //    other's rendering/animation state.
 //
 
+import AppKit
 import SwiftUI
 
 struct LiveCaptionsView: View {
@@ -69,10 +70,20 @@ enum LiveCaptionsStyle {
 
     static var font: Font {
         let family = SettingsStore.shared.liveCaptionsFontFamily
-        if family == SettingsStore.liveCaptionsSystemFontSentinel {
-            return .system(size: SettingsStore.shared.liveCaptionsFontSize, weight: .semibold)
+        let size = SettingsStore.shared.liveCaptionsFontSize
+        guard family != SettingsStore.liveCaptionsSystemFontSentinel else {
+            return .system(size: size, weight: .semibold)
         }
-        return .custom(family, size: SettingsStore.shared.liveCaptionsFontSize)
+        // Font.custom(_:size:) expects a font's PostScript name, not its
+        // family name, and those differ for most third-party fonts (e.g.
+        // family "Hitmarker Text" -> PostScript name "HitmarkerText-Regular").
+        // NSFontManager resolves by family correctly regardless of naming,
+        // so go through NSFont and bridge to SwiftUI, with a safe fallback
+        // if the family can't be resolved (e.g. no longer installed).
+        if let nsFont = NSFontManager.shared.font(withFamily: family, traits: [], weight: 5, size: size) {
+            return Font(nsFont)
+        }
+        return .system(size: size, weight: .semibold)
     }
 
     static var lineHeight: CGFloat {
