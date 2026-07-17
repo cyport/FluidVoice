@@ -1928,6 +1928,142 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    // MARK: - Live Captions
+
+    /// Sentinel stored in `liveCaptionsFontFamily` meaning "use the system default font"
+    /// rather than a specific installed font family name.
+    static let liveCaptionsSystemFontSentinel = "System"
+
+    /// Whether the live captions overlay window is enabled (default: off, opt-in)
+    var liveCaptionsEnabled: Bool {
+        get { self.defaults.bool(forKey: Keys.liveCaptionsEnabled) }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.liveCaptionsEnabled)
+        }
+    }
+
+    /// Number of caption lines visible in the window (default: 3)
+    var liveCaptionsMaxLines: Int {
+        get {
+            let stored = self.defaults.object(forKey: Keys.liveCaptionsMaxLines) as? NSNumber
+            let value = stored?.intValue ?? 3
+            return max(min(value, 6), 1)
+        }
+        set {
+            objectWillChange.send()
+            let clamped = max(min(newValue, 6), 1)
+            self.defaults.set(clamped, forKey: Keys.liveCaptionsMaxLines)
+            NotificationCenter.default.post(name: NSNotification.Name("LiveCaptionsGeometryChanged"), object: nil)
+        }
+    }
+
+    /// Whether the captions window fades in/out (default: on)
+    var liveCaptionsFadeEnabled: Bool {
+        get {
+            self.defaults.object(forKey: Keys.liveCaptionsFadeEnabled) as? Bool ?? true
+        }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.liveCaptionsFadeEnabled)
+            NotificationCenter.default.post(name: NSNotification.Name("LiveCaptionsAppearanceChanged"), object: nil)
+        }
+    }
+
+    /// Fade animation duration in seconds (default: 0.25)
+    var liveCaptionsFadeDuration: Double {
+        get {
+            let value = self.defaults.double(forKey: Keys.liveCaptionsFadeDuration)
+            return value == 0.0 ? 0.25 : max(min(value, 1.0), 0.1)
+        }
+        set {
+            objectWillChange.send()
+            let clamped = max(min(newValue, 1.0), 0.1)
+            self.defaults.set(clamped, forKey: Keys.liveCaptionsFadeDuration)
+            NotificationCenter.default.post(name: NSNotification.Name("LiveCaptionsAppearanceChanged"), object: nil)
+        }
+    }
+
+    /// Width of the captions window in points (default: 520). Height is auto-derived from line count/font size.
+    var liveCaptionsWindowWidth: Double {
+        get {
+            let value = self.defaults.double(forKey: Keys.liveCaptionsWindowWidth)
+            return value == 0.0 ? 520.0 : max(min(value, 1000.0), 300.0)
+        }
+        set {
+            objectWillChange.send()
+            let clamped = max(min(newValue, 1000.0), 300.0)
+            self.defaults.set(clamped, forKey: Keys.liveCaptionsWindowWidth)
+            NotificationCenter.default.post(name: NSNotification.Name("LiveCaptionsGeometryChanged"), object: nil)
+        }
+    }
+
+    /// Font family used for caption text — any installed macOS font family name,
+    /// or `liveCaptionsSystemFontSentinel` for the system default (default).
+    var liveCaptionsFontFamily: String {
+        get {
+            self.defaults.string(forKey: Keys.liveCaptionsFontFamily) ?? Self.liveCaptionsSystemFontSentinel
+        }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.liveCaptionsFontFamily)
+            NotificationCenter.default.post(name: NSNotification.Name("LiveCaptionsAppearanceChanged"), object: nil)
+        }
+    }
+
+    /// Caption text font size in points (default: 22)
+    var liveCaptionsFontSize: Double {
+        get {
+            let value = self.defaults.double(forKey: Keys.liveCaptionsFontSize)
+            return value == 0.0 ? 22.0 : max(min(value, 48.0), 14.0)
+        }
+        set {
+            objectWillChange.send()
+            let clamped = max(min(newValue, 48.0), 14.0)
+            self.defaults.set(clamped, forKey: Keys.liveCaptionsFontSize)
+            NotificationCenter.default.post(name: NSNotification.Name("LiveCaptionsGeometryChanged"), object: nil)
+        }
+    }
+
+    /// Caption text color as a 6-digit hex string (default: white)
+    var liveCaptionsTextColorHex: String {
+        get {
+            self.defaults.string(forKey: Keys.liveCaptionsTextColorHex) ?? "FFFFFF"
+        }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.liveCaptionsTextColorHex)
+            NotificationCenter.default.post(name: NSNotification.Name("LiveCaptionsAppearanceChanged"), object: nil)
+        }
+    }
+
+    /// Caption window background color as a 6-digit hex string (default: black)
+    var liveCaptionsBackgroundColorHex: String {
+        get {
+            self.defaults.string(forKey: Keys.liveCaptionsBackgroundColorHex) ?? "000000"
+        }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.liveCaptionsBackgroundColorHex)
+            NotificationCenter.default.post(name: NSNotification.Name("LiveCaptionsAppearanceChanged"), object: nil)
+        }
+    }
+
+    /// Caption window background opacity, 0-1 (default: 0.6)
+    var liveCaptionsBackgroundOpacity: Double {
+        get {
+            guard self.defaults.object(forKey: Keys.liveCaptionsBackgroundOpacity) != nil else { return 0.6 }
+            let value = self.defaults.double(forKey: Keys.liveCaptionsBackgroundOpacity)
+            return max(min(value, 1.0), 0.0)
+        }
+        set {
+            objectWillChange.send()
+            let clamped = max(min(newValue, 1.0), 0.0)
+            self.defaults.set(clamped, forKey: Keys.liveCaptionsBackgroundOpacity)
+            NotificationCenter.default.post(name: NSNotification.Name("LiveCaptionsAppearanceChanged"), object: nil)
+        }
+    }
+
     /// How many recent transcription characters show in overlays (default: 150)
     var transcriptionPreviewCharLimit: Int {
         get {
@@ -4939,6 +5075,18 @@ private extension SettingsStore {
         static let overlayBottomOffsetMigratedTo50 = "OverlayBottomOffsetMigratedTo50"
         static let overlaySize = "OverlaySize"
         static let transcriptionPreviewCharLimit = "TranscriptionPreviewCharLimit"
+
+        // Live Captions
+        static let liveCaptionsEnabled = "LiveCaptionsEnabled"
+        static let liveCaptionsMaxLines = "LiveCaptionsMaxLines"
+        static let liveCaptionsFadeEnabled = "LiveCaptionsFadeEnabled"
+        static let liveCaptionsFadeDuration = "LiveCaptionsFadeDuration"
+        static let liveCaptionsWindowWidth = "LiveCaptionsWindowWidth"
+        static let liveCaptionsFontFamily = "LiveCaptionsFontFamily"
+        static let liveCaptionsFontSize = "LiveCaptionsFontSize"
+        static let liveCaptionsTextColorHex = "LiveCaptionsTextColorHex"
+        static let liveCaptionsBackgroundColorHex = "LiveCaptionsBackgroundColorHex"
+        static let liveCaptionsBackgroundOpacity = "LiveCaptionsBackgroundOpacity"
 
         /// Media Playback Control
         static let pauseMediaDuringTranscription = "PauseMediaDuringTranscription"

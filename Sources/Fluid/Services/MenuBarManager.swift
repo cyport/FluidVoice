@@ -82,6 +82,11 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
                 // Handle overlay lifecycle (independent of window state)
                 self?.handleOverlayState(isRunning: isRunning, asrService: asrService)
+
+                // Live captions has its own independent lifecycle — driven
+                // directly by isRunning rather than the pill/notch's
+                // debounced show/hide machinery above.
+                self?.handleLiveCaptionsState(isRunning: isRunning, asrService: asrService)
             }
             .store(in: &self.cancellables)
 
@@ -92,6 +97,9 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
                 guard self != nil else { return }
                 if NotchOverlayManager.shared.shouldShowOrTrackLivePreviewText {
                     NotchOverlayManager.shared.updateTranscriptionText(newText)
+                }
+                if SettingsStore.shared.liveCaptionsEnabled {
+                    LiveCaptionsTextModel.shared.ingest(newText)
                 }
             }
             .store(in: &self.cancellables)
@@ -219,6 +227,19 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             }
             self.pendingHideOperation = hideItem
             DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(30), execute: hideItem)
+        }
+    }
+
+    private func handleLiveCaptionsState(isRunning: Bool, asrService: ASRService) {
+        guard SettingsStore.shared.liveCaptionsEnabled else { return }
+        guard !asrService.isDictionaryTrainingCaptureActive else { return }
+
+        if isRunning {
+            LiveCaptionsTextModel.shared.reset()
+            LiveCaptionsWindowController.shared.show()
+        } else {
+            LiveCaptionsTextModel.shared.flushAll()
+            LiveCaptionsWindowController.shared.hide()
         }
     }
 

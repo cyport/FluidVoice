@@ -90,6 +90,33 @@ struct SettingsView: View {
         self.colorScheme == .light ? Color(nsColor: .labelColor).opacity(0.85) : self.theme.palette.secondaryText
     }
 
+    private var liveCaptionsTextColorBinding: Binding<Color> {
+        Binding<Color>(
+            get: { Color(hex: self.settings.liveCaptionsTextColorHex) ?? .white },
+            set: { self.settings.liveCaptionsTextColorHex = Self.hexString(from: $0) }
+        )
+    }
+
+    private var liveCaptionsBackgroundColorBinding: Binding<Color> {
+        Binding<Color>(
+            get: { Color(hex: self.settings.liveCaptionsBackgroundColorHex) ?? .black },
+            set: { self.settings.liveCaptionsBackgroundColorHex = Self.hexString(from: $0) }
+        )
+    }
+
+    /// All installed macOS font families, plus the system-default sentinel first.
+    private static var liveCaptionsFontFamilies: [String] {
+        [SettingsStore.liveCaptionsSystemFontSentinel] + NSFontManager.shared.availableFontFamilies.sorted()
+    }
+
+    private static func hexString(from color: Color) -> String {
+        guard let rgb = NSColor(color).usingColorSpace(.deviceRGB) else { return "FFFFFF" }
+        let red = Int((rgb.redComponent * 255).rounded())
+        let green = Int((rgb.greenComponent * 255).rounded())
+        let blue = Int((rgb.blueComponent * 255).rounded())
+        return String(format: "%02X%02X%02X", red, green, blue)
+    }
+
     private func isRecording(_ target: ShortcutRecordingTarget) -> Bool {
         self.activeShortcutRecordingTarget == target
     }
@@ -1443,6 +1470,191 @@ struct SettingsView: View {
                                     .italic()
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .padding(.top, 4)
+                            }
+                        }
+                    }
+                    .padding(16)
+                }
+
+                // Live Captions Settings Card
+                ThemedCard(style: .standard) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        Label("Live Captions", systemImage: "captions.bubble")
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+
+                        VStack(alignment: .leading, spacing: 12) {
+                            self.settingsToggleRow(
+                                title: "Enable Live Captions",
+                                description: "Show a floating captions window while you dictate",
+                                isOn: Binding(
+                                    get: { self.settings.liveCaptionsEnabled },
+                                    set: { self.settings.liveCaptionsEnabled = $0 }
+                                )
+                            )
+
+                            Divider().padding(.vertical, 4)
+
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Lines")
+                                        .font(self.theme.typography.bodyStrong)
+                                        .foregroundStyle(self.settingsTitleText)
+                                    Text("Number of caption lines visible at once")
+                                        .font(self.theme.typography.bodySmall)
+                                        .foregroundStyle(self.settingsSecondaryText)
+                                }
+
+                                Spacer()
+
+                                Stepper(
+                                    "\(self.settings.liveCaptionsMaxLines)",
+                                    value: self.$settings.liveCaptionsMaxLines,
+                                    in: 1...6
+                                )
+                                .frame(width: 90, alignment: .trailing)
+                            }
+
+                            Divider().padding(.vertical, 4)
+
+                            self.settingsToggleRow(
+                                title: "Fade In/Out",
+                                description: "Animate the captions window appearing and disappearing",
+                                isOn: Binding(
+                                    get: { self.settings.liveCaptionsFadeEnabled },
+                                    set: { self.settings.liveCaptionsFadeEnabled = $0 }
+                                )
+                            )
+
+                            if self.settings.liveCaptionsFadeEnabled {
+                                HStack(spacing: 10) {
+                                    Slider(value: self.$settings.liveCaptionsFadeDuration, in: 0.1...1.0)
+                                        .controlSize(.small)
+
+                                    Text(String(format: "%.2fs", self.settings.liveCaptionsFadeDuration))
+                                        .font(.caption.monospaced())
+                                        .foregroundStyle(self.settingsSecondaryText)
+                                        .frame(width: 44, alignment: .trailing)
+                                }
+                            }
+
+                            Divider().padding(.vertical, 4)
+
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Window Size")
+                                        .font(self.theme.typography.bodyStrong)
+                                        .foregroundStyle(self.settingsTitleText)
+                                    Text("Width of the captions window")
+                                        .font(self.theme.typography.bodySmall)
+                                        .foregroundStyle(self.settingsSecondaryText)
+                                }
+
+                                Spacer()
+
+                                HStack(spacing: 6) {
+                                    Slider(value: self.$settings.liveCaptionsWindowWidth, in: 300...1000)
+                                        .frame(width: 110)
+                                        .controlSize(.small)
+
+                                    Text("\(Int(self.settings.liveCaptionsWindowWidth)) px")
+                                        .font(.caption.monospaced())
+                                        .foregroundStyle(self.settingsSecondaryText)
+                                        .frame(width: 54, alignment: .trailing)
+                                }
+                                .frame(width: 170, alignment: .trailing)
+                            }
+
+                            Divider().padding(.vertical, 4)
+
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Font")
+                                        .font(self.theme.typography.bodyStrong)
+                                        .foregroundStyle(self.settingsTitleText)
+                                    Text("Typeface and size for the caption text")
+                                        .font(self.theme.typography.bodySmall)
+                                        .foregroundStyle(self.settingsSecondaryText)
+                                }
+
+                                Spacer()
+
+                                Picker("", selection: self.$settings.liveCaptionsFontFamily) {
+                                    ForEach(Self.liveCaptionsFontFamilies, id: \.self) { family in
+                                        Text(family == SettingsStore.liveCaptionsSystemFontSentinel ? "System Default" : family)
+                                            .tag(family)
+                                    }
+                                }
+                                .pickerStyle(.menu)
+                                .frame(width: 170, alignment: .trailing)
+                            }
+
+                            HStack(spacing: 10) {
+                                Text("Size")
+                                    .font(.caption)
+                                    .foregroundStyle(self.settingsSecondaryText)
+                                    .frame(width: 36, alignment: .trailing)
+
+                                Slider(value: self.$settings.liveCaptionsFontSize, in: 14...48)
+                                    .controlSize(.regular)
+
+                                Text("\(Int(self.settings.liveCaptionsFontSize)) pt")
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(self.settingsTertiaryText)
+                                    .frame(width: 44, alignment: .trailing)
+                            }
+
+                            Divider().padding(.vertical, 4)
+
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Text Color")
+                                        .font(self.theme.typography.bodyStrong)
+                                        .foregroundStyle(self.settingsTitleText)
+                                    Text("Color of the caption text")
+                                        .font(self.theme.typography.bodySmall)
+                                        .foregroundStyle(self.settingsSecondaryText)
+                                }
+
+                                Spacer()
+
+                                ColorPicker("", selection: self.liveCaptionsTextColorBinding, supportsOpacity: false)
+                                    .labelsHidden()
+                                    .frame(width: 44)
+                            }
+
+                            Divider().padding(.vertical, 4)
+
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Background")
+                                        .font(self.theme.typography.bodyStrong)
+                                        .foregroundStyle(self.settingsTitleText)
+                                    Text("Color and opacity of the captions window background")
+                                        .font(self.theme.typography.bodySmall)
+                                        .foregroundStyle(self.settingsSecondaryText)
+                                }
+
+                                Spacer()
+
+                                ColorPicker("", selection: self.liveCaptionsBackgroundColorBinding, supportsOpacity: false)
+                                    .labelsHidden()
+                                    .frame(width: 44)
+                            }
+
+                            HStack(spacing: 10) {
+                                Text("Opacity")
+                                    .font(.caption)
+                                    .foregroundStyle(self.settingsSecondaryText)
+                                    .frame(width: 50, alignment: .trailing)
+
+                                Slider(value: self.$settings.liveCaptionsBackgroundOpacity, in: 0...1)
+                                    .controlSize(.regular)
+
+                                Text("\(Int(self.settings.liveCaptionsBackgroundOpacity * 100))%")
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(self.settingsTertiaryText)
+                                    .frame(width: 44, alignment: .trailing)
                             }
                         }
                     }
