@@ -2115,6 +2115,43 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    /// Whether the recording pill/notch overlay is suppressed while
+    /// dictating, leaving only the Live Captions window visible
+    /// (default: off — only takes effect when liveCaptionsEnabled is also on,
+    /// so there's always at least one visual indicator that recording is active)
+    var liveCaptionsHideDictationOverlay: Bool {
+        get {
+            self.defaults.object(forKey: Keys.liveCaptionsHideDictationOverlay) as? Bool ?? false
+        }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.liveCaptionsHideDictationOverlay)
+        }
+    }
+
+    /// Persisted top-left origin of a manually-dragged Live Captions window,
+    /// in screen coordinates. Nil means "not yet dragged — use the default
+    /// auto-positioning."
+    var liveCaptionsWindowOrigin: CGPoint? {
+        get {
+            guard self.defaults.object(forKey: Keys.liveCaptionsWindowOriginX) != nil,
+                  self.defaults.object(forKey: Keys.liveCaptionsWindowOriginY) != nil
+            else { return nil }
+            let x = self.defaults.double(forKey: Keys.liveCaptionsWindowOriginX)
+            let y = self.defaults.double(forKey: Keys.liveCaptionsWindowOriginY)
+            return CGPoint(x: x, y: y)
+        }
+        set {
+            if let newValue {
+                self.defaults.set(newValue.x, forKey: Keys.liveCaptionsWindowOriginX)
+                self.defaults.set(newValue.y, forKey: Keys.liveCaptionsWindowOriginY)
+            } else {
+                self.defaults.removeObject(forKey: Keys.liveCaptionsWindowOriginX)
+                self.defaults.removeObject(forKey: Keys.liveCaptionsWindowOriginY)
+            }
+        }
+    }
+
     /// How many recent transcription characters show in overlays (default: 150)
     var transcriptionPreviewCharLimit: Int {
         get {
@@ -5142,6 +5179,9 @@ private extension SettingsStore {
         static let liveCaptionsOutlineColorHex = "LiveCaptionsOutlineColorHex"
         static let liveCaptionsShadowEnabled = "LiveCaptionsShadowEnabled"
         static let liveCaptionsSyphonEnabled = "LiveCaptionsSyphonEnabled"
+        static let liveCaptionsHideDictationOverlay = "LiveCaptionsHideDictationOverlay"
+        static let liveCaptionsWindowOriginX = "LiveCaptionsWindowOriginX"
+        static let liveCaptionsWindowOriginY = "LiveCaptionsWindowOriginY"
 
         /// Media Playback Control
         static let pauseMediaDuringTranscription = "PauseMediaDuringTranscription"

@@ -174,11 +174,19 @@ enum LiveCaptionsStyle {
 
     /// Soft fade on the topmost (possibly partially-clipped) line, matching
     /// how macOS/Zoom-style live captions render the "more text above" edge.
+    /// A fixed point height, not a fraction of contentHeight — at 0.16 of
+    /// contentHeight (the old approach) this covered roughly half of the
+    /// topmost visible line for typical settings, making fully-visible text
+    /// look cut off. A small fixed edge softens the clip boundary above the
+    /// top line without eating into it.
+    private static let topFadeHeight: CGFloat = 6
+
     static var topFadeMask: LinearGradient {
-        LinearGradient(
+        let fraction = self.contentHeight > 0 ? min(self.topFadeHeight / self.contentHeight, 0.2) : 0
+        return LinearGradient(
             stops: [
                 .init(color: .clear, location: 0),
-                .init(color: .black, location: 0.16),
+                .init(color: .black, location: fraction),
                 .init(color: .black, location: 1),
             ],
             startPoint: .top,

@@ -7,6 +7,10 @@
 //  but is an independent window with its own lifecycle, geometry, and
 //  positioning so it can coexist with the recording pill/notch overlay.
 //
+//  The window is user-draggable (click anywhere on its background, including
+//  through the caption text, and drag). The dragged position is persisted
+//  and reused on future shows instead of the default auto-positioning.
+//
 
 import AppKit
 import Combine
@@ -19,6 +23,10 @@ final class LiveCaptionsWindowController {
     private var window: NSPanel?
     private var targetScreen: NSScreen?
     private var pendingOrderOutWorkItem: DispatchWorkItem?
+    /// Suppresses the didMove-triggered position-save while we're
+    /// repositioning the window ourselves (e.g. after a resize) — only
+    /// user-initiated drags should overwrite the saved origin.
+    private var isProgrammaticMove = false
 
     private init() {
         NotificationCenter.default.addObserver(forName: NSNotification.Name("LiveCaptionsGeometryChanged"), object: nil, queue: .main) { [weak self] _ in
@@ -88,11 +96,11 @@ final class LiveCaptionsWindowController {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
-        panel.isMovableByWindowBackground = false
+        // Click-and-drag anywhere on the panel (including through the text,
+        // since SwiftUI Text doesn't itself consume mouse-down) moves it.
+        panel.isMovableByWindowBackground = true
         panel.hidesOnDeactivate = false
         panel.animationBehavior = .none
-        // Purely informational overlay — never steal clicks from whatever's underneath.
-        panel.ignoresMouseEvents = true
 
         let hostingView = NSHostingView(rootView: LiveCaptionsView())
         hostingView.wantsLayer = true
@@ -100,6 +108,24 @@ final class LiveCaptionsWindowController {
         panel.contentView = hostingView
 
         self.window = panel
+
+        // Deliberately not deferred via Task { @MainActor in } like the other
+        // observers in this file — isProgrammaticMove must be checked
+        // synchronously (it's flipped back to false immediately after the
+        // triggering setFrameOrigin call), so an async hop here would always
+        // see it as false and defeat the programmatic/user-drag distinction.
+        // queue: .main guarantees this already runs on the main actor at
+        // runtime; assumeIsolated asserts that to the compiler.
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didMoveNotification,
+            object: panel,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, !self.isProgrammaticMove, let window = self.window else { return }
+                SettingsStore.shared.liveCaptionsWindowOrigin = window.frame.origin
+            }
+        }
     }
 
     private func applyGeometry() {
@@ -118,24 +144,35 @@ final class LiveCaptionsWindowController {
         let screen = self.targetScreen ?? window.screen ?? OverlayScreenResolver.screenForCurrentPointer()
         guard let screen else { return }
 
-        let fullFrame = screen.frame
         let visibleFrame = screen.visibleFrame
         let windowSize = window.frame.size
 
-        let x = fullFrame.midX - windowSize.width / 2
+        let origin: NSPoint
+        if let saved = SettingsStore.shared.liveCaptionsWindowOrigin {
+            // Clamp in case the saved position came from a since-disconnected
+            // screen, or the window has since been resized.
+            let x = max(min(saved.x, visibleFrame.maxX - windowSize.width), visibleFrame.minX)
+            let y = max(min(saved.y, visibleFrame.maxY - windowSize.height), visibleFrame.minY)
+            origin = NSPoint(x: x, y: y)
+        } else {
+            let fullFrame = screen.frame
+            let x = fullFrame.midX - windowSize.width / 2
 
-        // Sit above the existing recording pill/notch overlay so both can be
-        // visible at once without overlapping.
-        let baseOffset: CGFloat = SettingsStore.shared.overlayPosition == .bottom
-            ? CGFloat(SettingsStore.shared.overlayBottomOffset) + 90
-            : 120
+            // Sit above the existing recording pill/notch overlay so both can
+            // be visible at once without overlapping.
+            let baseOffset: CGFloat = SettingsStore.shared.overlayPosition == .bottom
+                ? CGFloat(SettingsStore.shared.overlayBottomOffset) + 90
+                : 120
 
-        var y = visibleFrame.minY + baseOffset
-        let minY = visibleFrame.minY + 10
-        let maxY = visibleFrame.maxY - windowSize.height - 10
-        y = max(min(y, maxY), minY)
+            let minY = visibleFrame.minY + 10
+            let maxY = visibleFrame.maxY - windowSize.height - 10
+            let y = max(min(visibleFrame.minY + baseOffset, maxY), minY)
+            origin = NSPoint(x: x, y: y)
+        }
 
-        window.setFrameOrigin(NSPoint(x: x, y: y))
+        self.isProgrammaticMove = true
+        window.setFrameOrigin(origin)
+        self.isProgrammaticMove = false
     }
 }
 

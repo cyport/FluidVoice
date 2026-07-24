@@ -120,6 +120,19 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             return
         }
 
+        // User opted to see only the Live Captions window — suppress the
+        // pill/notch entirely. Only takes effect when captions are actually
+        // enabled, so there's always some visual indicator of recording.
+        if SettingsStore.shared.liveCaptionsEnabled, SettingsStore.shared.liveCaptionsHideDictationOverlay {
+            self.pendingShowOperation?.cancel()
+            self.pendingShowOperation = nil
+            if self.overlayVisible {
+                self.overlayVisible = false
+                NotchOverlayManager.shared.hide()
+            }
+            return
+        }
+
         // Don't hide the overlay while AI processing is active.
         // Without this, the notch can disappear during the short "Refining..." phase because
         // `isRunning` becomes false before post-processing completes.
@@ -245,6 +258,11 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
     func showRecordingOverlayImmediately() {
         AutomaticDictionaryCorrectionTracker.shared.cancel()
+
+        guard !(SettingsStore.shared.liveCaptionsEnabled && SettingsStore.shared.liveCaptionsHideDictationOverlay) else {
+            self.overlayBench("instant_show_return reason=live_captions_only")
+            return
+        }
 
         guard let asrService else {
             self.overlayBench("instant_show_return reason=no_asr_service")

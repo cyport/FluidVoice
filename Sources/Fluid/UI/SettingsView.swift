@@ -1500,6 +1500,19 @@ struct SettingsView: View {
                                 )
                             )
 
+                            if self.settings.liveCaptionsEnabled {
+                                Divider().padding(.vertical, 4)
+
+                                self.settingsToggleRow(
+                                    title: "Hide Recording Indicator",
+                                    description: "Show only the captions window while dictating — hide the usual recording pill/notch",
+                                    isOn: Binding(
+                                        get: { self.settings.liveCaptionsHideDictationOverlay },
+                                        set: { self.settings.liveCaptionsHideDictationOverlay = $0 }
+                                    )
+                                )
+                            }
+
                             Divider().padding(.vertical, 4)
 
                             HStack {
