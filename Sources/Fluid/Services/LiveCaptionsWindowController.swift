@@ -34,6 +34,11 @@ final class LiveCaptionsWindowController {
     private var inactivityWorkItem: DispatchWorkItem?
     private var pendingClearWorkItem: DispatchWorkItem?
     private var textActivitySubscription: AnyCancellable?
+    /// Set for the duration of clearDisplay() so the activity-tracking sink
+    /// (see handleTextActivity) can tell our own clear apart from real new
+    /// speech, without depending on reading text properties back mid-publish
+    /// (see the comment in handleTextActivity for why that's unreliable).
+    private var isSelfInflictedClear = false
     /// Suppresses the didMove-triggered position-save while we're
     /// repositioning the window ourselves (e.g. after a resize) — only
     /// user-initiated drags should overwrite the saved origin.
@@ -124,6 +129,23 @@ final class LiveCaptionsWindowController {
     }
 
     private func handleTextActivity() {
+        // clearDisplay() (fired once a silence fade-out completes) also
+        // publishes through renderedCommittedText/renderedPendingText, which
+        // is what this method listens to. Without this guard, our own clear
+        // would be mistaken for new speech: it would immediately fade a
+        // blank box back in and re-arm a fresh inactivity timer, producing a
+        // phantom fade cycle that runs indefinitely with no real speech
+        // behind it, and fights with genuinely new activity once it does
+        // arrive (the "timing goes wrong the longer it runs" symptom).
+        //
+        // This can't be a guard on the current text being non-empty: @Published
+        // sends through its subject in willSet, so a sink reading the
+        // property back — even synchronously, as this one does — sees the
+        // OLD value, not the one just being set. That made the equivalent
+        // "is text empty" check here reliably wrong. isSelfInflictedClear is
+        // a plain flag with no dependency on Combine's publish timing.
+        guard !self.isSelfInflictedClear else { return }
+
         // Speech resuming after a silence-triggered fade cancels any
         // still-pending clear from that fade — the buffer we're now adding
         // to is the one that should stay.
@@ -148,7 +170,11 @@ final class LiveCaptionsWindowController {
 
         let timeout = SettingsStore.shared.liveCaptionsInactivityTimeout
         let workItem = DispatchWorkItem { [weak self] in
-            let fadeEnabled = SettingsStore.shared.liveCaptionsFadeEnabled
+            // liveCaptionsInactivityFadeEnabled (checked in the guard above)
+            // is what actually governs this fade — liveCaptionsFadeEnabled is
+            // the unrelated general show/hide toggle. Using the latter here
+            // previously meant the clear could fire before the fade-out
+            // animation it was supposed to wait for had actually finished.
             let fadeDuration = SettingsStore.shared.liveCaptionsInactivityFadeDuration
             LiveCaptionsPresentationState.shared.fadeDuration = fadeDuration
             LiveCaptionsPresentationState.shared.isVisible = false
@@ -159,10 +185,12 @@ final class LiveCaptionsWindowController {
             // blank while the box is still partway through fading.
             self?.pendingClearWorkItem?.cancel()
             let clearWorkItem = DispatchWorkItem {
-                LiveCaptionsTextModel.shared.reset()
+                self?.isSelfInflictedClear = true
+                LiveCaptionsTextModel.shared.clearDisplay()
+                self?.isSelfInflictedClear = false
             }
             self?.pendingClearWorkItem = clearWorkItem
-            DispatchQueue.main.asyncAfter(deadline: .now() + (fadeEnabled ? fadeDuration : 0), execute: clearWorkItem)
+            DispatchQueue.main.asyncAfter(deadline: .now() + fadeDuration, execute: clearWorkItem)
         }
         self.inactivityWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + timeout, execute: workItem)
@@ -218,8 +246,12 @@ final class LiveCaptionsWindowController {
         guard let window else { return }
 
         let width = SettingsStore.shared.liveCaptionsWindowWidth
-        let lineHeight = SettingsStore.shared.liveCaptionsFontSize * 1.35
-        let height = lineHeight * CGFloat(SettingsStore.shared.liveCaptionsMaxLines) + 32
+        // Must match LiveCaptionsStyle.contentHeight exactly (same measured
+        // value, not a separately-computed approximation) — a previous,
+        // independent `fontSize * 1.35 * maxLines` formula here disagreed
+        // with the content view's own measured clip-box height by a few
+        // points, which is what made the top line look cropped/drifting.
+        let height = LiveCaptionsStyle.contentHeight + LiveCaptionsStyle.verticalPadding * 2
 
         window.setContentSize(NSSize(width: width, height: height))
         self.positionWindow()

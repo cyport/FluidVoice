@@ -119,12 +119,32 @@ final class LiveCaptionsTextModel: ObservableObject {
         self.updateRenderedText()
     }
 
-    /// Clears all captions state. Called at recording start only — captions
-    /// accumulate for a whole session, not per-utterance.
+    /// Clears all captions state, including totalCommittedCount. Only valid
+    /// when the incoming ASR word stream is also about to restart from
+    /// scratch (i.e. actual recording start) — ASRService.partialTranscription
+    /// is NOT cleared by a mid-session inactivity pause, so calling this
+    /// then would make the very next ingest() treat the entire pre-pause
+    /// transcript as new again and redisplay it in full. Use clearDisplay()
+    /// for that case instead.
     func reset() {
         self.committedWords = []
         self.committedWordTimestamps = []
         self.totalCommittedCount = 0
+        self.pendingWords = []
+        self.stableTicks = []
+        self.renderedCommittedText = ""
+        self.renderedPendingText = ""
+        self.pendingStartsNewLine = false
+    }
+
+    /// Clears only what's rendered, for the inactivity-fade "start blank"
+    /// behavior. Deliberately leaves totalCommittedCount untouched — the ASR
+    /// stream keeps accumulating for the whole recording session regardless
+    /// of display-level fades, so this position marker must stay put or the
+    /// next ingest() will re-slice from the start of the session again.
+    func clearDisplay() {
+        self.committedWords = []
+        self.committedWordTimestamps = []
         self.pendingWords = []
         self.stableTicks = []
         self.renderedCommittedText = ""

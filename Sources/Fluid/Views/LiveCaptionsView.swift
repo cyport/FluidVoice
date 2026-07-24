@@ -80,12 +80,19 @@ enum LiveCaptionsStyle {
         Font(self.nsFont)
     }
 
-    static var lineHeight: CGFloat {
-        SettingsStore.shared.liveCaptionsFontSize * 1.35
-    }
-
+    /// The clip box's height must come from the exact same measurement
+    /// system as measuredHeight(for:) below — not an independent formula
+    /// like `fontSize * 1.35` — otherwise the two heights disagree by a few
+    /// points depending on font/line count, and that gap is what showed up
+    /// as a persistently cropped or drifting top line no fixed fudge factor
+    /// could fully absorb. Measuring a maxLines-line probe through the same
+    /// boundingRect call guarantees N wrapped lines of real text always
+    /// measure as exactly N/maxLines of this box, so the crop boundary
+    /// always lands exactly between two lines.
     static var contentHeight: CGFloat {
-        self.lineHeight * CGFloat(SettingsStore.shared.liveCaptionsMaxLines)
+        let maxLines = max(min(SettingsStore.shared.liveCaptionsMaxLines, 6), 1)
+        let probe = Array(repeating: "Wg", count: maxLines).joined(separator: "\n")
+        return self.measuredHeight(for: probe)
     }
 
     static var textAreaWidth: CGFloat {
@@ -222,15 +229,6 @@ struct LiveCaptionsTextContentView: View {
     @ObservedObject private var textModel = LiveCaptionsTextModel.shared
 
     private let scrollAnimationDuration: Double = 0.25
-    /// Extra upward push applied on top of the measured overflow. AppKit's
-    /// NSAttributedString-based measurement (LiveCaptionsStyle.measuredHeight)
-    /// doesn't perfectly match SwiftUI's own Text layout metrics, so without
-    /// this the top visible line can end up a few points short of fully
-    /// clear of the clip boundary — this margin absorbs that discrepancy so
-    /// the top line's true top edge always sits above the box, not just the
-    /// fade. (Widening the fade instead — tried previously — only hides part
-    /// of the line under a gradient rather than actually moving it clear.)
-    private let topOverflowSafetyMargin: CGFloat = 8
 
     private var measuredHeight: CGFloat {
         LiveCaptionsStyle.measuredHeight(for: LiveCaptionsStyle.combinedPlainString)
@@ -238,11 +236,14 @@ struct LiveCaptionsTextContentView: View {
 
     /// Positive while there's less than a boxful of text (keeps it glued to
     /// the bottom of the box); negative once content overflows the box
-    /// (pushes the excess — plus a small safety margin — above the top
-    /// edge, where it gets clipped).
+    /// (pushes the excess above the top edge, where it gets clipped).
+    /// contentHeight and measuredHeight are both derived from the exact same
+    /// measuredHeight(for:) call (see LiveCaptionsStyle.contentHeight), so a
+    /// wrapped line's worth of new text always shifts this by exactly one
+    /// line height — the crop boundary lands cleanly between two lines
+    /// rather than mid-line, with no separate fudge-factor margin needed.
     private var scrollOffset: CGFloat {
-        let raw = LiveCaptionsStyle.contentHeight - self.measuredHeight
-        return raw < 0 ? raw - self.topOverflowSafetyMargin : raw
+        min(0, LiveCaptionsStyle.contentHeight - self.measuredHeight)
     }
 
     var body: some View {
