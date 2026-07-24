@@ -14,7 +14,10 @@
 //  While shown, also tracks caption text activity: if no new word lands
 //  within liveCaptionsInactivityTimeout seconds, the content fades out
 //  (liveCaptionsInactivityFadeDuration) without hiding the window itself,
-//  and fades back in the moment new text arrives.
+//  and clears once the fade has fully completed (not before — the buffer
+//  reset itself should never be visible), so resuming speech starts blank
+//  rather than continuing to grow the whole session's history. Fades back
+//  in the moment new text arrives.
 //
 
 import AppKit
@@ -29,6 +32,7 @@ final class LiveCaptionsWindowController {
     private var targetScreen: NSScreen?
     private var pendingOrderOutWorkItem: DispatchWorkItem?
     private var inactivityWorkItem: DispatchWorkItem?
+    private var pendingClearWorkItem: DispatchWorkItem?
     private var textActivitySubscription: AnyCancellable?
     /// Suppresses the didMove-triggered position-save while we're
     /// repositioning the window ourselves (e.g. after a resize) — only
@@ -113,11 +117,19 @@ final class LiveCaptionsWindowController {
     private func stopTrackingActivity() {
         self.inactivityWorkItem?.cancel()
         self.inactivityWorkItem = nil
+        self.pendingClearWorkItem?.cancel()
+        self.pendingClearWorkItem = nil
         self.textActivitySubscription?.cancel()
         self.textActivitySubscription = nil
     }
 
     private func handleTextActivity() {
+        // Speech resuming after a silence-triggered fade cancels any
+        // still-pending clear from that fade — the buffer we're now adding
+        // to is the one that should stay.
+        self.pendingClearWorkItem?.cancel()
+        self.pendingClearWorkItem = nil
+
         // New words arriving after a silence-triggered fade should bring
         // captions back, using the same (typically snappier) inactivity
         // fade duration rather than the general show/hide one.
@@ -136,9 +148,21 @@ final class LiveCaptionsWindowController {
 
         let timeout = SettingsStore.shared.liveCaptionsInactivityTimeout
         let workItem = DispatchWorkItem { [weak self] in
-            LiveCaptionsPresentationState.shared.fadeDuration = SettingsStore.shared.liveCaptionsInactivityFadeDuration
+            let fadeEnabled = SettingsStore.shared.liveCaptionsFadeEnabled
+            let fadeDuration = SettingsStore.shared.liveCaptionsInactivityFadeDuration
+            LiveCaptionsPresentationState.shared.fadeDuration = fadeDuration
             LiveCaptionsPresentationState.shared.isVisible = false
             self?.inactivityWorkItem = nil
+
+            // Clear only once the fade-out has fully finished, so the reset
+            // itself is never visible — otherwise the words would blink to
+            // blank while the box is still partway through fading.
+            self?.pendingClearWorkItem?.cancel()
+            let clearWorkItem = DispatchWorkItem {
+                LiveCaptionsTextModel.shared.reset()
+            }
+            self?.pendingClearWorkItem = clearWorkItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + (fadeEnabled ? fadeDuration : 0), execute: clearWorkItem)
         }
         self.inactivityWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + timeout, execute: workItem)
