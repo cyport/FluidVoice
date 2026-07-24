@@ -1755,6 +1755,20 @@ struct SettingsView: View {
                                     set: { self.settings.liveCaptionsShadowEnabled = $0 }
                                 )
                             )
+
+                            Divider().padding(.vertical, 4)
+
+                            self.settingsToggleRow(
+                                title: "Broadcast via NDI",
+                                description: "Publish captions (text only, transparent) as an NDI source for OBS, vMix, QLab, and other apps on the network",
+                                isOn: Binding(
+                                    get: { self.settings.liveCaptionsNDIEnabled },
+                                    set: { newValue in
+                                        self.settings.liveCaptionsNDIEnabled = newValue
+                                        LiveCaptionsNDIPublisher.shared.applyEnabledState()
+                                    }
+                                )
+                            )
                         }
                     }
                     .padding(16)

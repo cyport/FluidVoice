@@ -2141,6 +2141,19 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    /// Whether captions are also published as an NDI video source (text
+    /// only, alpha channel, no background) for compositing in other apps
+    /// on the network — e.g. OBS, vMix, QLab (default: off)
+    var liveCaptionsNDIEnabled: Bool {
+        get {
+            self.defaults.object(forKey: Keys.liveCaptionsNDIEnabled) as? Bool ?? false
+        }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.liveCaptionsNDIEnabled)
+        }
+    }
+
     /// Whether the recording pill/notch overlay is suppressed while
     /// dictating, leaving only the Live Captions window visible
     /// (default: off — only takes effect when liveCaptionsEnabled is also on,
@@ -5207,6 +5220,7 @@ private extension SettingsStore {
         static let liveCaptionsOutlineEnabled = "LiveCaptionsOutlineEnabled"
         static let liveCaptionsOutlineColorHex = "LiveCaptionsOutlineColorHex"
         static let liveCaptionsShadowEnabled = "LiveCaptionsShadowEnabled"
+        static let liveCaptionsNDIEnabled = "LiveCaptionsNDIEnabled"
         static let liveCaptionsHideDictationOverlay = "LiveCaptionsHideDictationOverlay"
         static let liveCaptionsWindowOriginX = "LiveCaptionsWindowOriginX"
         static let liveCaptionsWindowOriginY = "LiveCaptionsWindowOriginY"
