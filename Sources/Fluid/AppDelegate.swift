@@ -33,7 +33,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
         // Initialize app settings (dock visibility, etc.)
         SettingsStore.shared.initializeAppSettings()
-        LiveCaptionsSyphonPublisher.shared.applyEnabledState()
         let shouldOfferMLXUpgrade = PrivateAIMLXUpgradeCoordinator.prepareOfferIfNeeded()
         LocalAPIServer.shared.start()
 

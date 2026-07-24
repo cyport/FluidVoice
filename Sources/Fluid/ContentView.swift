@@ -2320,10 +2320,10 @@ struct ContentView: View {
             ]
         )
 
-        let shouldPersistOutputs = route == .normal
+        let shouldPersistOutputs = route == .normal && !SettingsStore.shared.liveCaptionsEnabled
         if !shouldPersistOutputs {
             DebugLogger.shared.info(
-                "Sandbox route active: suppressing clipboard/history/external typing side effects",
+                "Sandbox route or Live Captions active: suppressing clipboard/history/external typing side effects",
                 source: "ContentView"
             )
         }

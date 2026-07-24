@@ -8,9 +8,7 @@
 //  sentence (so a finished sentence's line never reflows as later words are
 //  appended — see LiveCaptionsTextModel.pendingStartsNewLine), clipped to a
 //  fixed-height box that animates upward as text grows past the visible
-//  line count. Used both by the on-screen window (LiveCaptionsView) and by
-//  the Syphon texture publisher (ImageRenderer-rendered snapshots of
-//  LiveCaptionsTextContentView).
+//  line count.
 //
 
 import AppKit
@@ -33,7 +31,7 @@ struct LiveCaptionsView: View {
             )
             .opacity(self.presentation.isVisible ? 1 : 0)
             .animation(
-                self.settings.liveCaptionsFadeEnabled ? .easeInOut(duration: self.settings.liveCaptionsFadeDuration) : nil,
+                self.settings.liveCaptionsFadeEnabled ? .easeInOut(duration: self.presentation.fadeDuration) : nil,
                 value: self.presentation.isVisible
             )
     }
@@ -209,8 +207,7 @@ enum LiveCaptionsStyle {
 /// fixed-height box — as text grows past the visible line count, the block
 /// is offset upward (animated) so older lines scroll off the top smoothly.
 /// No background — fully transparent, so LiveCaptionsView can lay a
-/// background box behind it, and the Syphon publisher can export it with
-/// alpha intact.
+/// background box behind it.
 ///
 /// The offset is driven by LiveCaptionsStyle.measuredHeight(for:), a
 /// synchronous NSAttributedString-based text measurement — NOT a SwiftUI
@@ -225,6 +222,15 @@ struct LiveCaptionsTextContentView: View {
     @ObservedObject private var textModel = LiveCaptionsTextModel.shared
 
     private let scrollAnimationDuration: Double = 0.25
+    /// Extra upward push applied on top of the measured overflow. AppKit's
+    /// NSAttributedString-based measurement (LiveCaptionsStyle.measuredHeight)
+    /// doesn't perfectly match SwiftUI's own Text layout metrics, so without
+    /// this the top visible line can end up a few points short of fully
+    /// clear of the clip boundary — this margin absorbs that discrepancy so
+    /// the top line's true top edge always sits above the box, not just the
+    /// fade. (Widening the fade instead — tried previously — only hides part
+    /// of the line under a gradient rather than actually moving it clear.)
+    private let topOverflowSafetyMargin: CGFloat = 8
 
     private var measuredHeight: CGFloat {
         LiveCaptionsStyle.measuredHeight(for: LiveCaptionsStyle.combinedPlainString)
@@ -232,9 +238,11 @@ struct LiveCaptionsTextContentView: View {
 
     /// Positive while there's less than a boxful of text (keeps it glued to
     /// the bottom of the box); negative once content overflows the box
-    /// (pushes the excess above the top edge, where it gets clipped).
+    /// (pushes the excess — plus a small safety margin — above the top
+    /// edge, where it gets clipped).
     private var scrollOffset: CGFloat {
-        LiveCaptionsStyle.contentHeight - self.measuredHeight
+        let raw = LiveCaptionsStyle.contentHeight - self.measuredHeight
+        return raw < 0 ? raw - self.topOverflowSafetyMargin : raw
     }
 
     var body: some View {

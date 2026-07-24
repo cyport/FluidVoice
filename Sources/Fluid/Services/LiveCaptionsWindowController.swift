@@ -11,6 +11,11 @@
 //  through the caption text, and drag). The dragged position is persisted
 //  and reused on future shows instead of the default auto-positioning.
 //
+//  While shown, also tracks caption text activity: if no new word lands
+//  within liveCaptionsInactivityTimeout seconds, the content fades out
+//  (liveCaptionsInactivityFadeDuration) without hiding the window itself,
+//  and fades back in the moment new text arrives.
+//
 
 import AppKit
 import Combine
@@ -23,6 +28,8 @@ final class LiveCaptionsWindowController {
     private var window: NSPanel?
     private var targetScreen: NSScreen?
     private var pendingOrderOutWorkItem: DispatchWorkItem?
+    private var inactivityWorkItem: DispatchWorkItem?
+    private var textActivitySubscription: AnyCancellable?
     /// Suppresses the didMove-triggered position-save while we're
     /// repositioning the window ourselves (e.g. after a resize) — only
     /// user-initiated drags should overwrite the saved origin.
@@ -63,12 +70,18 @@ final class LiveCaptionsWindowController {
             window.orderFrontRegardless()
         }
 
+        LiveCaptionsPresentationState.shared.fadeDuration = SettingsStore.shared.liveCaptionsFadeDuration
         LiveCaptionsPresentationState.shared.isVisible = true
+
+        self.startTrackingActivity()
     }
 
     func hide() {
+        self.stopTrackingActivity()
+
         guard let window, window.isVisible else { return }
 
+        LiveCaptionsPresentationState.shared.fadeDuration = SettingsStore.shared.liveCaptionsFadeDuration
         LiveCaptionsPresentationState.shared.isVisible = false
 
         let fadeEnabled = SettingsStore.shared.liveCaptionsFadeEnabled
@@ -80,6 +93,55 @@ final class LiveCaptionsWindowController {
         }
         self.pendingOrderOutWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    // MARK: - Inactivity auto-fade
+
+    private func startTrackingActivity() {
+        self.resetInactivityTimer()
+
+        let textModel = LiveCaptionsTextModel.shared
+        self.textActivitySubscription = Publishers.Merge(
+            textModel.$renderedCommittedText.map { _ in () },
+            textModel.$renderedPendingText.map { _ in () }
+        )
+        .sink { [weak self] in
+            self?.handleTextActivity()
+        }
+    }
+
+    private func stopTrackingActivity() {
+        self.inactivityWorkItem?.cancel()
+        self.inactivityWorkItem = nil
+        self.textActivitySubscription?.cancel()
+        self.textActivitySubscription = nil
+    }
+
+    private func handleTextActivity() {
+        // New words arriving after a silence-triggered fade should bring
+        // captions back, using the same (typically snappier) inactivity
+        // fade duration rather than the general show/hide one.
+        if !LiveCaptionsPresentationState.shared.isVisible {
+            LiveCaptionsPresentationState.shared.fadeDuration = SettingsStore.shared.liveCaptionsInactivityFadeDuration
+            LiveCaptionsPresentationState.shared.isVisible = true
+        }
+        self.resetInactivityTimer()
+    }
+
+    private func resetInactivityTimer() {
+        self.inactivityWorkItem?.cancel()
+        self.inactivityWorkItem = nil
+
+        guard SettingsStore.shared.liveCaptionsInactivityFadeEnabled else { return }
+
+        let timeout = SettingsStore.shared.liveCaptionsInactivityTimeout
+        let workItem = DispatchWorkItem { [weak self] in
+            LiveCaptionsPresentationState.shared.fadeDuration = SettingsStore.shared.liveCaptionsInactivityFadeDuration
+            LiveCaptionsPresentationState.shared.isVisible = false
+            self?.inactivityWorkItem = nil
+        }
+        self.inactivityWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + timeout, execute: workItem)
     }
 
     private func createWindow() {
@@ -179,12 +241,15 @@ final class LiveCaptionsWindowController {
 /// Drives the Live Captions content-level fade. LiveCaptionsView observes
 /// this and applies its own `.animation(value:)` to `isVisible`, which is
 /// far more reliable than animating NSWindow.alphaValue for a borderless,
-/// non-activating panel.
+/// non-activating panel. fadeDuration is set by the controller immediately
+/// before each isVisible change, so different triggers (recording
+/// start/stop vs. inactivity) can use different durations.
 @MainActor
 final class LiveCaptionsPresentationState: ObservableObject {
     static let shared = LiveCaptionsPresentationState()
 
     @Published var isVisible: Bool = false
+    @Published var fadeDuration: Double = 0.25
 
     private init() {}
 }

@@ -1560,6 +1560,49 @@ struct SettingsView: View {
 
                             Divider().padding(.vertical, 4)
 
+                            self.settingsToggleRow(
+                                title: "Fade Out When Idle",
+                                description: "Fade captions out after a pause in speech, and back in once you resume",
+                                isOn: Binding(
+                                    get: { self.settings.liveCaptionsInactivityFadeEnabled },
+                                    set: { self.settings.liveCaptionsInactivityFadeEnabled = $0 }
+                                )
+                            )
+
+                            if self.settings.liveCaptionsInactivityFadeEnabled {
+                                HStack(spacing: 10) {
+                                    Text("After")
+                                        .font(.caption)
+                                        .foregroundStyle(self.settingsSecondaryText)
+                                        .frame(width: 36, alignment: .trailing)
+
+                                    Slider(value: self.$settings.liveCaptionsInactivityTimeout, in: 1...30)
+                                        .controlSize(.small)
+
+                                    Text(String(format: "%.0fs idle", self.settings.liveCaptionsInactivityTimeout))
+                                        .font(.caption.monospaced())
+                                        .foregroundStyle(self.settingsSecondaryText)
+                                        .frame(width: 60, alignment: .trailing)
+                                }
+
+                                HStack(spacing: 10) {
+                                    Text("Over")
+                                        .font(.caption)
+                                        .foregroundStyle(self.settingsSecondaryText)
+                                        .frame(width: 36, alignment: .trailing)
+
+                                    Slider(value: self.$settings.liveCaptionsInactivityFadeDuration, in: 0.1...2.0)
+                                        .controlSize(.small)
+
+                                    Text(String(format: "%.2fs", self.settings.liveCaptionsInactivityFadeDuration))
+                                        .font(.caption.monospaced())
+                                        .foregroundStyle(self.settingsSecondaryText)
+                                        .frame(width: 60, alignment: .trailing)
+                                }
+                            }
+
+                            Divider().padding(.vertical, 4)
+
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text("Window Size")
@@ -1710,20 +1753,6 @@ struct SettingsView: View {
                                 isOn: Binding(
                                     get: { self.settings.liveCaptionsShadowEnabled },
                                     set: { self.settings.liveCaptionsShadowEnabled = $0 }
-                                )
-                            )
-
-                            Divider().padding(.vertical, 4)
-
-                            self.settingsToggleRow(
-                                title: "Broadcast via Syphon",
-                                description: "Publish captions (text only, transparent) as a Syphon source for OBS and other apps on this Mac",
-                                isOn: Binding(
-                                    get: { self.settings.liveCaptionsSyphonEnabled },
-                                    set: { newValue in
-                                        self.settings.liveCaptionsSyphonEnabled = newValue
-                                        LiveCaptionsSyphonPublisher.shared.applyEnabledState()
-                                    }
                                 )
                             )
                         }

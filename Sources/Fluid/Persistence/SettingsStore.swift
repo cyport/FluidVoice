@@ -1984,6 +1984,45 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    /// Whether captions fade out on their own after a period with no new
+    /// words, then fade back in once speech resumes (default: on)
+    var liveCaptionsInactivityFadeEnabled: Bool {
+        get {
+            self.defaults.object(forKey: Keys.liveCaptionsInactivityFadeEnabled) as? Bool ?? true
+        }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.liveCaptionsInactivityFadeEnabled)
+        }
+    }
+
+    /// Seconds of no new committed/pending text before captions auto-fade out (default: 3)
+    var liveCaptionsInactivityTimeout: Double {
+        get {
+            let value = self.defaults.double(forKey: Keys.liveCaptionsInactivityTimeout)
+            return value == 0.0 ? 3.0 : max(min(value, 30.0), 1.0)
+        }
+        set {
+            objectWillChange.send()
+            let clamped = max(min(newValue, 30.0), 1.0)
+            self.defaults.set(clamped, forKey: Keys.liveCaptionsInactivityTimeout)
+        }
+    }
+
+    /// Duration of the inactivity fade in/out, independent of
+    /// liveCaptionsFadeDuration (which covers the recording start/stop fade) (default: 0.5)
+    var liveCaptionsInactivityFadeDuration: Double {
+        get {
+            let value = self.defaults.double(forKey: Keys.liveCaptionsInactivityFadeDuration)
+            return value == 0.0 ? 0.5 : max(min(value, 2.0), 0.1)
+        }
+        set {
+            objectWillChange.send()
+            let clamped = max(min(newValue, 2.0), 0.1)
+            self.defaults.set(clamped, forKey: Keys.liveCaptionsInactivityFadeDuration)
+        }
+    }
+
     /// Width of the captions window in points (default: 520). Height is auto-derived from line count/font size.
     var liveCaptionsWindowWidth: Double {
         get {
@@ -2099,19 +2138,6 @@ final class SettingsStore: ObservableObject {
             objectWillChange.send()
             self.defaults.set(newValue, forKey: Keys.liveCaptionsShadowEnabled)
             NotificationCenter.default.post(name: NSNotification.Name("LiveCaptionsAppearanceChanged"), object: nil)
-        }
-    }
-
-    /// Whether captions are also published as a Syphon video source (text
-    /// only, alpha channel, no background) for compositing in other apps
-    /// on the same Mac — e.g. OBS via its Syphon plugin (default: off)
-    var liveCaptionsSyphonEnabled: Bool {
-        get {
-            self.defaults.object(forKey: Keys.liveCaptionsSyphonEnabled) as? Bool ?? false
-        }
-        set {
-            objectWillChange.send()
-            self.defaults.set(newValue, forKey: Keys.liveCaptionsSyphonEnabled)
         }
     }
 
@@ -5169,6 +5195,9 @@ private extension SettingsStore {
         static let liveCaptionsMaxLines = "LiveCaptionsMaxLines"
         static let liveCaptionsFadeEnabled = "LiveCaptionsFadeEnabled"
         static let liveCaptionsFadeDuration = "LiveCaptionsFadeDuration"
+        static let liveCaptionsInactivityFadeEnabled = "LiveCaptionsInactivityFadeEnabled"
+        static let liveCaptionsInactivityTimeout = "LiveCaptionsInactivityTimeout"
+        static let liveCaptionsInactivityFadeDuration = "LiveCaptionsInactivityFadeDuration"
         static let liveCaptionsWindowWidth = "LiveCaptionsWindowWidth"
         static let liveCaptionsFontFamily = "LiveCaptionsFontFamily"
         static let liveCaptionsFontSize = "LiveCaptionsFontSize"
@@ -5178,7 +5207,6 @@ private extension SettingsStore {
         static let liveCaptionsOutlineEnabled = "LiveCaptionsOutlineEnabled"
         static let liveCaptionsOutlineColorHex = "LiveCaptionsOutlineColorHex"
         static let liveCaptionsShadowEnabled = "LiveCaptionsShadowEnabled"
-        static let liveCaptionsSyphonEnabled = "LiveCaptionsSyphonEnabled"
         static let liveCaptionsHideDictationOverlay = "LiveCaptionsHideDictationOverlay"
         static let liveCaptionsWindowOriginX = "LiveCaptionsWindowOriginX"
         static let liveCaptionsWindowOriginY = "LiveCaptionsWindowOriginY"
