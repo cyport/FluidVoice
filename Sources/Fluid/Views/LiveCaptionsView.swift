@@ -6,9 +6,8 @@
 //  (frozen, full-opacity) and pending (still-shifting, dimmed) caption text
 //  as one flowed paragraph, with a hard line break after each completed
 //  sentence (so a finished sentence's line never reflows as later words are
-//  appended — see LiveCaptionsTextModel.pendingStartsNewLine), clipped to a
-//  fixed-height box that animates upward as text grows past the visible
-//  line count.
+//  appended — see LiveCaptionsTextModel.pendingStartsNewLine), trimmed to
+//  the last N wrapped lines so nothing is ever cropped mid-glyph.
 //
 
 import AppKit
@@ -28,6 +27,11 @@ struct LiveCaptionsView: View {
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(self.backgroundColor)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Color.yellow, lineWidth: 1)
+                    .opacity(self.settings.liveCaptionsDebugBorderEnabled ? 1 : 0)
             )
             .opacity(self.presentation.isVisible ? 1 : 0)
             .animation(
@@ -63,7 +67,7 @@ enum LiveCaptionsStyle {
     /// name, and those differ for most third-party fonts (e.g. family
     /// "Hitmarker Text" -> PostScript name "HitmarkerText-Regular").
     /// NSFontManager resolves by family correctly regardless of naming, so
-    /// resolve to an NSFont here (also reused directly for text-height
+    /// resolve to an NSFont here (also reused directly for line-wrap
     /// measurement below) and bridge to SwiftUI, with a safe fallback if the
     /// family can't be resolved (e.g. no longer installed).
     static var nsFont: NSFont {
@@ -80,87 +84,62 @@ enum LiveCaptionsStyle {
         Font(self.nsFont)
     }
 
-    /// The clip box's height must come from the exact same measurement
-    /// system as measuredHeight(for:) below — not an independent formula
-    /// like `fontSize * 1.35` — otherwise the two heights disagree by a few
-    /// points depending on font/line count, and that gap is what showed up
-    /// as a persistently cropped or drifting top line no fixed fudge factor
-    /// could fully absorb. Measuring a maxLines-line probe through the same
-    /// boundingRect call guarantees N wrapped lines of real text always
-    /// measure as exactly N/maxLines of this box, so the crop boundary
-    /// always lands exactly between two lines.
+    static var maxLines: Int {
+        max(min(SettingsStore.shared.liveCaptionsMaxLines, 6), 1)
+    }
+
+    /// A generous estimate for sizing the panel/clip box — not load-bearing
+    /// for correctness anymore (see trailingLinesStartIndex below), just
+    /// needs to comfortably fit maxLines lines of real SwiftUI-rendered
+    /// text. Padded past the raw AppKit measurement: earlier attempts to
+    /// make this pixel-exact against SwiftUI's own Text layout (matching
+    /// paragraph style, line spacing, everything) still measurably
+    /// disagreed with what actually rendered on screen — confirmed by
+    /// rendering real captions to a PNG and seeing the top/bottom lines
+    /// visibly cropped despite the two height formulas agreeing numerically.
+    /// Since content is now trimmed to whole wrapped lines before it ever
+    /// reaches the Text view (nothing left to clip in normal operation), a
+    /// generous box only risks a little empty space at the bottom, never a
+    /// cropped glyph.
     static var contentHeight: CGFloat {
-        let maxLines = max(min(SettingsStore.shared.liveCaptionsMaxLines, 6), 1)
-        let probe = Array(repeating: "Wg", count: maxLines).joined(separator: "\n")
-        return self.measuredHeight(for: probe)
+        let probe = Array(repeating: "Wg", count: self.maxLines).joined(separator: "\n")
+        return self.measuredHeight(for: probe) + 12
     }
 
     static var textAreaWidth: CGFloat {
         max(SettingsStore.shared.liveCaptionsWindowWidth - self.horizontalPadding * 2, 100)
     }
 
-    static var committedText: Text {
-        Text(LiveCaptionsTextModel.shared.renderedCommittedText)
-            .foregroundColor(self.textColor)
-    }
-
-    static var pendingText: Text {
-        Text(LiveCaptionsTextModel.shared.renderedPendingText)
-            .foregroundColor(self.textColor.opacity(0.55))
-    }
-
-    /// " " or "\n" between the committed and pending text — a hard line
-    /// break when the last committed word ended a sentence, so a freshly
-    /// started sentence begins on its own line instead of continuing the
-    /// previous (already-frozen) one.
-    private static var pendingConnector: Text {
-        Text(LiveCaptionsTextModel.shared.pendingStartsNewLine ? "\n" : " ")
-    }
-
-    static var combinedText: Text {
-        let committed = LiveCaptionsTextModel.shared.renderedCommittedText
-        let pending = LiveCaptionsTextModel.shared.renderedPendingText
+    static func combinedText(committed: String, pending: String, startsNewLine: Bool) -> Text {
         if committed.isEmpty {
-            return self.pendingText
+            return Text(pending).foregroundColor(self.textColor.opacity(0.55))
         } else if pending.isEmpty {
-            return self.committedText
+            return Text(committed).foregroundColor(self.textColor)
         } else {
-            return self.committedText + self.pendingConnector + self.pendingText
+            let connector = Text(startsNewLine ? "\n" : " ")
+            return Text(committed).foregroundColor(self.textColor)
+                + connector
+                + Text(pending).foregroundColor(self.textColor.opacity(0.55))
         }
     }
 
     /// Same content as combinedText but uniformly colored, for the outline
     /// layers — the stroke doesn't need the committed/pending distinction.
-    static var outlineText: Text {
-        let committed = LiveCaptionsTextModel.shared.renderedCommittedText
-        let pending = LiveCaptionsTextModel.shared.renderedPendingText
+    static func outlineText(committed: String, pending: String, startsNewLine: Bool) -> Text {
         if committed.isEmpty {
             return Text(pending).foregroundColor(self.outlineColor)
         } else if pending.isEmpty {
             return Text(committed).foregroundColor(self.outlineColor)
         } else {
-            let connector = LiveCaptionsTextModel.shared.pendingStartsNewLine ? "\n" : " "
+            let connector = startsNewLine ? "\n" : " "
             return Text(committed + connector + pending).foregroundColor(self.outlineColor)
         }
     }
 
-    /// Plain (unstyled) concatenation of committed + connector + pending,
-    /// for text-height measurement — not for display.
-    static var combinedPlainString: String {
-        let committed = LiveCaptionsTextModel.shared.renderedCommittedText
-        let pending = LiveCaptionsTextModel.shared.renderedPendingText
-        if committed.isEmpty { return pending }
-        if pending.isEmpty { return committed }
-        let connector = LiveCaptionsTextModel.shared.pendingStartsNewLine ? "\n" : " "
-        return committed + connector + pending
-    }
-
     /// Synchronously measures the wrapped height of `text` at the current
-    /// font/width, via NSAttributedString/NSString text layout rather than
-    /// a SwiftUI GeometryReader — computed fresh on every call from the
-    /// current text content, so (unlike the GeometryReader + PreferenceKey
-    /// approach tried previously) there's no asynchronous feedback loop
-    /// that can get stuck: the result is always correct as of this call.
+    /// font/width, via NSAttributedString/NSString text layout. Used only
+    /// for the generous panel-sizing estimate above — no longer load-bearing
+    /// for what gets cropped (see trailingLinesStartIndex).
     static func measuredHeight(for text: String) -> CGFloat {
         guard !text.isEmpty else { return 0 }
         let paragraphStyle = NSMutableParagraphStyle()
@@ -177,13 +156,54 @@ enum LiveCaptionsStyle {
         return ceil(bounds.height)
     }
 
-    /// Soft fade on the topmost (possibly partially-clipped) line, matching
-    /// how macOS/Zoom-style live captions render the "more text above" edge.
-    /// A fixed point height, not a fraction of contentHeight — at 0.16 of
-    /// contentHeight (the old approach) this covered roughly half of the
-    /// topmost visible line for typical settings, making fully-visible text
-    /// look cut off. A small fixed edge softens the clip boundary above the
-    /// top line without eating into it.
+    /// Returns the index within `text` where the last `maxLines` *wrapped*
+    /// lines begin, using AppKit's real line-breaking (NSLayoutManager) at
+    /// the exact font/width captions render with. This is deliberately NOT
+    /// a height calculation: matching pixel HEIGHTS between AppKit and
+    /// SwiftUI turned out not to be reliable enough in practice (see
+    /// contentHeight's comment) to safely clip against. Where text WRAPS is
+    /// a much more robust thing for the two to agree on — both ultimately
+    /// resolve to CoreText's line-breaking for the same font/width/text —
+    /// so the caller trims the STRING itself to this slice and feeds only
+    /// that to the Text view. With nothing left past what's meant to be
+    /// shown, there's nothing for a height mismatch to crop.
+    static func trailingLinesStartIndex(in text: String, maxLines: Int) -> String.Index {
+        guard !text.isEmpty else { return text.startIndex }
+
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineSpacing = 4
+        let textStorage = NSTextStorage(string: text, attributes: [
+            .font: self.nsFont,
+            .paragraphStyle: paragraphStyle,
+        ])
+        let layoutManager = NSLayoutManager()
+        textStorage.addLayoutManager(layoutManager)
+        let container = NSTextContainer(size: CGSize(width: self.textAreaWidth, height: .greatestFiniteMagnitude))
+        container.lineFragmentPadding = 0
+        layoutManager.addTextContainer(container)
+        layoutManager.ensureLayout(for: container)
+
+        let glyphCount = layoutManager.numberOfGlyphs
+        guard glyphCount > 0 else { return text.startIndex }
+
+        var lineStartOffsets: [Int] = []
+        layoutManager.enumerateLineFragments(forGlyphRange: NSRange(location: 0, length: glyphCount)) { _, _, _, glyphRange, _ in
+            let charRange = layoutManager.characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
+            lineStartOffsets.append(charRange.location)
+        }
+        guard lineStartOffsets.count > maxLines else { return text.startIndex }
+
+        let cutUTF16Offset = lineStartOffsets[lineStartOffsets.count - maxLines]
+        guard let utf16Index = text.utf16.index(text.utf16.startIndex, offsetBy: cutUTF16Offset, limitedBy: text.utf16.endIndex),
+              let index = utf16Index.samePosition(in: text)
+        else { return text.startIndex }
+        return index
+    }
+
+    /// Soft fade on the topmost visible line, signaling "more text above" —
+    /// purely cosmetic now that the top line is always shown intact (never
+    /// mid-cropped): matches how macOS/Zoom-style live captions render that
+    /// edge.
     private static let topFadeHeight: CGFloat = 6
 
     static var topFadeMask: LinearGradient {
@@ -210,64 +230,81 @@ enum LiveCaptionsStyle {
 }
 
 /// Text-only caption content: committed (frozen, full-opacity) + pending
-/// (dimmed) words, with optional outline/drop-shadow, clipped to a
-/// fixed-height box — as text grows past the visible line count, the block
-/// is offset upward (animated) so older lines scroll off the top smoothly.
-/// No background — fully transparent, so LiveCaptionsView can lay a
+/// (dimmed) words, with optional outline/drop-shadow, trimmed to the last
+/// maxLines *wrapped* lines before rendering — not clipped/offset after the
+/// fact. No background — fully transparent, so LiveCaptionsView can lay a
 /// background box behind it.
-///
-/// The offset is driven by LiveCaptionsStyle.measuredHeight(for:), a
-/// synchronous NSAttributedString-based text measurement — NOT a SwiftUI
-/// GeometryReader + PreferenceKey feedback loop (an earlier version used
-/// that and the measured height reliably got stuck at 0, confirmed by
-/// direct instrumentation, permanently pushing all text below the visible
-/// clip bounds). Since the measurement here is computed synchronously from
-/// the current text on every body evaluation, there's no async step that
-/// can get stuck.
 struct LiveCaptionsTextContentView: View {
     @ObservedObject private var settings = SettingsStore.shared
     @ObservedObject private var textModel = LiveCaptionsTextModel.shared
 
-    private let scrollAnimationDuration: Double = 0.25
+    /// The committed/pending text actually fed to the Text view, trimmed to
+    /// at most maxLines wrapped lines. Splitting is done on the full
+    /// committed+connector+pending string so the trim can land inside
+    /// either part; see LiveCaptionsStyle.trailingLinesStartIndex for how
+    /// the cut point itself is found.
+    private var visibleSlice: (committed: String, pending: String) {
+        let committed = self.textModel.renderedCommittedText
+        let pending = self.textModel.renderedPendingText
+        let connector = self.textModel.pendingStartsNewLine ? "\n" : " "
 
-    private var measuredHeight: CGFloat {
-        LiveCaptionsStyle.measuredHeight(for: LiveCaptionsStyle.combinedPlainString)
-    }
+        let full: String
+        if committed.isEmpty {
+            full = pending
+        } else if pending.isEmpty {
+            full = committed
+        } else {
+            full = committed + connector + pending
+        }
+        guard !full.isEmpty else { return ("", "") }
 
-    /// Positive while there's less than a boxful of text (keeps it glued to
-    /// the bottom of the box); negative once content overflows the box
-    /// (pushes the excess above the top edge, where it gets clipped).
-    /// contentHeight and measuredHeight are both derived from the exact same
-    /// measuredHeight(for:) call (see LiveCaptionsStyle.contentHeight), so a
-    /// wrapped line's worth of new text always shifts this by exactly one
-    /// line height — the crop boundary lands cleanly between two lines
-    /// rather than mid-line, with no separate fudge-factor margin needed.
-    private var scrollOffset: CGFloat {
-        min(0, LiveCaptionsStyle.contentHeight - self.measuredHeight)
+        let maxLines = LiveCaptionsStyle.maxLines
+        let cutIndex = LiveCaptionsStyle.trailingLinesStartIndex(in: full, maxLines: maxLines)
+        guard cutIndex > full.startIndex else { return (committed, pending) }
+
+        let committedEndIndex = committed.isEmpty ? full.startIndex : full.index(full.startIndex, offsetBy: committed.count)
+        if cutIndex >= committedEndIndex {
+            return ("", String(full[cutIndex...]))
+        } else {
+            return (String(full[cutIndex..<committedEndIndex]), pending)
+        }
     }
 
     var body: some View {
+        let slice = self.visibleSlice
+
         ZStack(alignment: .topLeading) {
             if self.settings.liveCaptionsOutlineEnabled {
                 ForEach(Array(LiveCaptionsStyle.outlineDirections.enumerated()), id: \.offset) { _, direction in
-                    LiveCaptionsStyle.styledTextBlock(LiveCaptionsStyle.outlineText)
-                        .offset(x: direction.width * LiveCaptionsStyle.outlineWidth, y: direction.height * LiveCaptionsStyle.outlineWidth)
+                    LiveCaptionsStyle.styledTextBlock(
+                        LiveCaptionsStyle.outlineText(committed: slice.committed, pending: slice.pending, startsNewLine: self.textModel.pendingStartsNewLine)
+                    )
+                    .offset(x: direction.width * LiveCaptionsStyle.outlineWidth, y: direction.height * LiveCaptionsStyle.outlineWidth)
                 }
             }
 
-            LiveCaptionsStyle.styledTextBlock(LiveCaptionsStyle.combinedText)
-                .shadow(
-                    color: self.settings.liveCaptionsShadowEnabled ? .black.opacity(0.55) : .clear,
-                    radius: self.settings.liveCaptionsShadowEnabled ? 2.5 : 0,
-                    x: 0,
-                    y: self.settings.liveCaptionsShadowEnabled ? 1.5 : 0
-                )
+            LiveCaptionsStyle.styledTextBlock(
+                LiveCaptionsStyle.combinedText(committed: slice.committed, pending: slice.pending, startsNewLine: self.textModel.pendingStartsNewLine)
+            )
+            .shadow(
+                color: self.settings.liveCaptionsShadowEnabled ? .black.opacity(0.55) : .clear,
+                radius: self.settings.liveCaptionsShadowEnabled ? 2.5 : 0,
+                x: 0,
+                y: self.settings.liveCaptionsShadowEnabled ? 1.5 : 0
+            )
         }
-        .offset(y: self.scrollOffset)
-        .animation(.easeOut(duration: self.scrollAnimationDuration), value: self.measuredHeight)
+        .animation(.easeOut(duration: 0.15), value: slice.committed + slice.pending)
         .frame(width: LiveCaptionsStyle.textAreaWidth, height: LiveCaptionsStyle.contentHeight, alignment: .top)
         .clipped()
         .mask(LiveCaptionsStyle.topFadeMask)
+        // Drawn after the mask, not inside .clipped()'s content, so the true
+        // crop boundary is always fully visible — for diagnosing whether
+        // this box is ever actually the thing doing any clipping.
+        .overlay(
+            Rectangle()
+                .stroke(Color.red, lineWidth: 1)
+                .opacity(self.settings.liveCaptionsDebugBorderEnabled ? 1 : 0)
+        )
         .padding(.horizontal, LiveCaptionsStyle.horizontalPadding)
         .padding(.vertical, LiveCaptionsStyle.verticalPadding)
     }

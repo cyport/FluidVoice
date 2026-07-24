@@ -1769,6 +1769,17 @@ struct SettingsView: View {
                                     }
                                 )
                             )
+
+                            Divider().padding(.vertical, 4)
+
+                            self.settingsToggleRow(
+                                title: "Show Debug Border",
+                                description: "Outline the caption window and its text clip box — for diagnosing cropped or drifting lines",
+                                isOn: Binding(
+                                    get: { self.settings.liveCaptionsDebugBorderEnabled },
+                                    set: { self.settings.liveCaptionsDebugBorderEnabled = $0 }
+                                )
+                            )
                         }
                     }
                     .padding(16)

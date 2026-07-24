@@ -56,6 +56,17 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     /// Subscription for forwarding audio levels to expanded command notch
     private var expandedModeAudioSubscription: AnyCancellable?
 
+    /// systemUptime of the last Live Captions streaming checkpoint (see
+    /// checkpointLiveCaptionsSessionIfNeeded). Reset whenever a Live
+    /// Captions recording starts.
+    private var lastLiveCaptionsCheckpointAt: TimeInterval = 0
+    /// How long a continuous Live Captions session runs before its
+    /// underlying audio buffer and streaming-diff state get checkpointed —
+    /// see ASRService.checkpointStreamingSession for why this is needed for
+    /// long sessions specifically. Not user-configurable: this is purely an
+    /// internal cost-bounding measure, invisible when it's working.
+    private let liveCaptionsCheckpointInterval: TimeInterval = 20
+
     func initializeMenuBar() {
         guard !self.isSetup else { return }
 
@@ -100,9 +111,32 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
                 }
                 if SettingsStore.shared.liveCaptionsEnabled {
                     LiveCaptionsTextModel.shared.ingest(newText)
+                    self?.checkpointLiveCaptionsSessionIfNeeded()
                 }
             }
             .store(in: &self.cancellables)
+    }
+
+    /// Periodically resets ASRService's underlying audio buffer and
+    /// streaming-diff bookkeeping for a long-running Live Captions session
+    /// — see ASRService.checkpointStreamingSession for why this is needed.
+    /// Must run right after ingest() above, on the same main-actor turn,
+    /// with nothing async in between: flushAll()+rebaseForStreamingCheckpoint()
+    /// have to freeze and re-baseline LiveCaptionsTextModel against the text
+    /// that was JUST ingested before the checkpoint clears ASRService's own
+    /// copy of it, or the tail end of speech before the checkpoint would be
+    /// silently dropped. Uses rebaseForStreamingCheckpoint(), not reset() —
+    /// this checkpoint is inaudible/invisible to the person speaking, so it
+    /// must stay invisible on screen too, not flash the captions blank every
+    /// liveCaptionsCheckpointInterval seconds.
+    private func checkpointLiveCaptionsSessionIfNeeded() {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now - self.lastLiveCaptionsCheckpointAt >= self.liveCaptionsCheckpointInterval else { return }
+        self.lastLiveCaptionsCheckpointAt = now
+
+        LiveCaptionsTextModel.shared.flushAll()
+        LiveCaptionsTextModel.shared.rebaseForStreamingCheckpoint()
+        self.asrService?.checkpointStreamingSession()
     }
 
     private func handleOverlayState(isRunning: Bool, asrService: ASRService) {
@@ -249,6 +283,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
         if isRunning {
             LiveCaptionsTextModel.shared.reset()
+            self.lastLiveCaptionsCheckpointAt = ProcessInfo.processInfo.systemUptime
             LiveCaptionsWindowController.shared.show()
         } else {
             LiveCaptionsTextModel.shared.flushAll()

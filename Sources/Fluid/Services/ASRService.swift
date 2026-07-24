@@ -1807,6 +1807,38 @@ final class ASRService: ObservableObject {
         return (ASRTranscriptionResult(text: cleanedText, confidence: result.confidence), estimatedSamples)
     }
 
+    /// Clears the accumulated raw audio and streaming-diff bookkeeping while
+    /// leaving the recording session itself (isRunning, finalText) untouched
+    /// — the next streaming tick starts a fresh "segment" from empty audio,
+    /// as if the buffer had just been cleared at a normal restart.
+    ///
+    /// processStreamingChunk() always re-transcribes the buffer from sample
+    /// 0 (`getPrefix(currentSampleCount)`, i.e. everything captured so far),
+    /// not just the newest audio. For a short dictation that's negligible,
+    /// but for a multi-minute continuous session the audio buffer and the
+    /// per-tick transcription cost both grow for as long as recording
+    /// continues — which is what made captions stall after a minute or two
+    /// (each tick got slower until it exceeded streamingChunkDurationSeconds
+    /// and chunks started getting skipped) and kept memory climbing for the
+    /// whole session. Callers should periodically checkpoint long-running
+    /// sessions to keep both bounded — see LiveCaptions' use of this in
+    /// MenuBarManager, which is the only caller today.
+    ///
+    /// Callers MUST have already consumed the current partialTranscription
+    /// value before calling this (e.g. LiveCaptionsTextModel.ingest() then
+    /// flushAll()) — it's cleared here, and freezing/ingesting it after the
+    /// fact is too late.
+    func checkpointStreamingSession() {
+        guard self.isRunning else { return }
+        self.audioBuffer.clear(keepingCapacity: true)
+        self.previousFullTranscription.removeAll()
+        self.partialTranscription.removeAll()
+        self.lastProcessedSampleCount = 0
+        self.benchmarkLastChunkSampleCount = 0
+        (self.transcriptionProvider as? FluidAudioProvider)?.resetStreamingPreviewCache()
+        self.benchmarkLog("live_captions_checkpoint")
+    }
+
     func stopWithoutTranscription() async {
         guard self.isRunning else { return }
         defer {

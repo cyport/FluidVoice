@@ -152,6 +152,21 @@ final class LiveCaptionsTextModel: ObservableObject {
         self.pendingStartsNewLine = false
     }
 
+    /// The mirror image of clearDisplay(): rebases totalCommittedCount back
+    /// to 0 to match ASRService's own streaming session being periodically
+    /// checkpointed (see ASRService.checkpointStreamingSession), but
+    /// deliberately leaves everything already on screen untouched. A
+    /// captions viewer should never see the screen flash blank just because
+    /// the audio pipeline restarted its internal buffer — unlike an actual
+    /// pause/resume, this checkpoint is invisible to the person speaking and
+    /// should stay invisible on screen too. Call flushAll() first: any word
+    /// still pending is tracked by its position in the ASR stream that's
+    /// about to disappear, so it must be frozen into committedWords (which
+    /// this method does NOT touch) before that position resets.
+    func rebaseForStreamingCheckpoint() {
+        self.totalCommittedCount = 0
+    }
+
     /// Drops committed words that are both already scrolled off screen
     /// (beyond the rendered window) and older than the retention interval,
     /// so a long dictation session doesn't accumulate memory forever. Only

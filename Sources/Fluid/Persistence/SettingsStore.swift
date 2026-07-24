@@ -2141,6 +2141,20 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    /// Whether the caption clip box is outlined so its exact boundaries are
+    /// visible — a debugging aid for diagnosing top/bottom line cropping,
+    /// not a normal presentation option (default: off)
+    var liveCaptionsDebugBorderEnabled: Bool {
+        get {
+            self.defaults.object(forKey: Keys.liveCaptionsDebugBorderEnabled) as? Bool ?? false
+        }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.liveCaptionsDebugBorderEnabled)
+            NotificationCenter.default.post(name: NSNotification.Name("LiveCaptionsAppearanceChanged"), object: nil)
+        }
+    }
+
     /// Whether captions are also published as an NDI video source (text
     /// only, alpha channel, no background) for compositing in other apps
     /// on the network — e.g. OBS, vMix, QLab (default: off)
@@ -5220,6 +5234,7 @@ private extension SettingsStore {
         static let liveCaptionsOutlineEnabled = "LiveCaptionsOutlineEnabled"
         static let liveCaptionsOutlineColorHex = "LiveCaptionsOutlineColorHex"
         static let liveCaptionsShadowEnabled = "LiveCaptionsShadowEnabled"
+        static let liveCaptionsDebugBorderEnabled = "LiveCaptionsDebugBorderEnabled"
         static let liveCaptionsNDIEnabled = "LiveCaptionsNDIEnabled"
         static let liveCaptionsHideDictationOverlay = "LiveCaptionsHideDictationOverlay"
         static let liveCaptionsWindowOriginX = "LiveCaptionsWindowOriginX"
