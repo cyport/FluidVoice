@@ -1547,15 +1547,15 @@ struct SettingsView: View {
                             )
 
                             if self.settings.liveCaptionsFadeEnabled {
-                                HStack(spacing: 10) {
-                                    Slider(value: self.$settings.liveCaptionsFadeDuration, in: 0.1...1.0)
-                                        .controlSize(.small)
-
-                                    Text(String(format: "%.2fs", self.settings.liveCaptionsFadeDuration))
-                                        .font(.caption.monospaced())
-                                        .foregroundStyle(self.settingsSecondaryText)
-                                        .frame(width: 44, alignment: .trailing)
-                                }
+                                EditableSlider(
+                                    value: Binding(
+                                        get: { self.settings.liveCaptionsFadeDuration },
+                                        set: { self.settings.liveCaptionsFadeDuration = $0 }
+                                    ),
+                                    range: 0.1...1.0,
+                                    labelWidth: 44,
+                                    format: { String(format: "%.2fs", $0) }
+                                )
                             }
 
                             Divider().padding(.vertical, 4)
@@ -1576,13 +1576,15 @@ struct SettingsView: View {
                                         .foregroundStyle(self.settingsSecondaryText)
                                         .frame(width: 36, alignment: .trailing)
 
-                                    Slider(value: self.$settings.liveCaptionsInactivityTimeout, in: 1...30)
-                                        .controlSize(.small)
-
-                                    Text(String(format: "%.0fs idle", self.settings.liveCaptionsInactivityTimeout))
-                                        .font(.caption.monospaced())
-                                        .foregroundStyle(self.settingsSecondaryText)
-                                        .frame(width: 60, alignment: .trailing)
+                                    EditableSlider(
+                                        value: Binding(
+                                            get: { self.settings.liveCaptionsInactivityTimeout },
+                                            set: { self.settings.liveCaptionsInactivityTimeout = $0 }
+                                        ),
+                                        range: 1...30,
+                                        labelWidth: 60,
+                                        format: { String(format: "%.0fs idle", $0) }
+                                    )
                                 }
 
                                 HStack(spacing: 10) {
@@ -1591,13 +1593,15 @@ struct SettingsView: View {
                                         .foregroundStyle(self.settingsSecondaryText)
                                         .frame(width: 36, alignment: .trailing)
 
-                                    Slider(value: self.$settings.liveCaptionsInactivityFadeDuration, in: 0.1...2.0)
-                                        .controlSize(.small)
-
-                                    Text(String(format: "%.2fs", self.settings.liveCaptionsInactivityFadeDuration))
-                                        .font(.caption.monospaced())
-                                        .foregroundStyle(self.settingsSecondaryText)
-                                        .frame(width: 60, alignment: .trailing)
+                                    EditableSlider(
+                                        value: Binding(
+                                            get: { self.settings.liveCaptionsInactivityFadeDuration },
+                                            set: { self.settings.liveCaptionsInactivityFadeDuration = $0 }
+                                        ),
+                                        range: 0.1...2.0,
+                                        labelWidth: 60,
+                                        format: { String(format: "%.2fs", $0) }
+                                    )
                                 }
                             }
 
@@ -1615,16 +1619,16 @@ struct SettingsView: View {
 
                                 Spacer()
 
-                                HStack(spacing: 6) {
-                                    Slider(value: self.$settings.liveCaptionsWindowWidth, in: 300...1000)
-                                        .frame(width: 110)
-                                        .controlSize(.small)
-
-                                    Text("\(Int(self.settings.liveCaptionsWindowWidth)) px")
-                                        .font(.caption.monospaced())
-                                        .foregroundStyle(self.settingsSecondaryText)
-                                        .frame(width: 54, alignment: .trailing)
-                                }
+                                EditableSlider(
+                                    value: Binding(
+                                        get: { self.settings.liveCaptionsWindowWidth },
+                                        set: { self.settings.liveCaptionsWindowWidth = $0 }
+                                    ),
+                                    range: 300...1000,
+                                    sliderWidth: 110,
+                                    labelWidth: 54,
+                                    format: { "\(Int($0)) px" }
+                                )
                                 .frame(width: 170, alignment: .trailing)
                             }
 
@@ -1658,13 +1662,15 @@ struct SettingsView: View {
                                     .foregroundStyle(self.settingsSecondaryText)
                                     .frame(width: 36, alignment: .trailing)
 
-                                Slider(value: self.$settings.liveCaptionsFontSize, in: 14...48)
-                                    .controlSize(.regular)
-
-                                Text("\(Int(self.settings.liveCaptionsFontSize)) pt")
-                                    .font(.caption.monospaced())
-                                    .foregroundStyle(self.settingsTertiaryText)
-                                    .frame(width: 44, alignment: .trailing)
+                                EditableSlider(
+                                    value: Binding(
+                                        get: { self.settings.liveCaptionsFontSize },
+                                        set: { self.settings.liveCaptionsFontSize = $0 }
+                                    ),
+                                    range: 14...48,
+                                    labelWidth: 44,
+                                    format: { "\(Int($0)) pt" }
+                                )
                             }
 
                             Divider().padding(.vertical, 4)
@@ -1711,13 +1717,17 @@ struct SettingsView: View {
                                     .foregroundStyle(self.settingsSecondaryText)
                                     .frame(width: 50, alignment: .trailing)
 
-                                Slider(value: self.$settings.liveCaptionsBackgroundOpacity, in: 0...1)
-                                    .controlSize(.regular)
-
-                                Text("\(Int(self.settings.liveCaptionsBackgroundOpacity * 100))%")
-                                    .font(.caption.monospaced())
-                                    .foregroundStyle(self.settingsTertiaryText)
-                                    .frame(width: 44, alignment: .trailing)
+                                EditableSlider(
+                                    value: Binding(
+                                        get: { self.settings.liveCaptionsBackgroundOpacity },
+                                        set: { self.settings.liveCaptionsBackgroundOpacity = $0 }
+                                    ),
+                                    range: 0...1,
+                                    labelWidth: 44,
+                                    format: { "\(Int($0 * 100))%" },
+                                    parse: { Double($0).map { $0 / 100 } },
+                                    editSeed: { "\(Int($0 * 100))" }
+                                )
                             }
 
                             Divider().padding(.vertical, 4)

@@ -24,10 +24,12 @@
 //  simply won't have NDI output available; the toggle silently no-ops.
 //
 //  Renders LiveCaptionsTextContentView (the same content the on-screen
-//  window uses) via ImageRenderer, only when caption text actually changes
-//  (not on a fixed timer) — the same lesson learned from the Syphon
-//  publisher, which found continuous fixed-rate rendering can starve the
-//  on-screen window's own SwiftUI render pass.
+//  window uses) via ImageRenderer, event-driven on text changes rather than
+//  a continuous fixed-rate render loop — the same lesson learned from the
+//  Syphon publisher, which found that starves the on-screen window's own
+//  SwiftUI render pass. A low-rate heartbeat (heartbeatInterval) still
+//  publishes on a timer even when text is static, so the NDI stream never
+//  goes fully silent — see its doc comment for why that matters.
 //
 
 import Combine
@@ -41,11 +43,25 @@ final class LiveCaptionsNDIPublisher {
 
     /// Coalesces rapid word-by-word updates into one send instead of one per word.
     private let publishDebounce: TimeInterval = 0.05
+    /// A frame goes out at least this often even when caption text hasn't
+    /// changed at all — including while captions are faded out/idle. Without
+    /// this, publishFrame() only fires on text changes (see
+    /// textChangeSubscription below), so any stretch where text is static —
+    /// an inactivity fade, a pause between sentences, or just no one
+    /// speaking — meant NDI simply stopped sending anything. NDI receivers
+    /// like QLab appear to time a source out and drop it after a stretch
+    /// with no frames at all, which is what looked like "the signal cuts
+    /// out when captions fade" — the on-screen window's fade and NDI's own
+    /// rendering are already two separate pipelines (NDI renders
+    /// LiveCaptionsTextContentView directly, not the window), so it was
+    /// never the window's opacity animation itself; it was this silence.
+    private let heartbeatInterval: TimeInterval = 1.0
 
     private var libraryHandle: UnsafeMutableRawPointer?
     private var ndiLib: UnsafePointer<NDIlib_v6>?
     private var sender: NDIlib_send_instance_t?
     private var textChangeSubscription: AnyCancellable?
+    private var heartbeatTimer: Timer?
 
     private init() {}
 
@@ -100,6 +116,15 @@ final class LiveCaptionsNDIPublisher {
             self?.publishFrame()
         }
 
+        self.heartbeatTimer?.invalidate()
+        let timer = Timer(timeInterval: self.heartbeatInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.publishFrame()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        self.heartbeatTimer = timer
+
         // Publish an initial (likely blank) frame immediately so clients see
         // a valid source right away rather than waiting for the first word.
         self.publishFrame()
@@ -108,6 +133,8 @@ final class LiveCaptionsNDIPublisher {
     private func stop() {
         self.textChangeSubscription?.cancel()
         self.textChangeSubscription = nil
+        self.heartbeatTimer?.invalidate()
+        self.heartbeatTimer = nil
 
         if let sender, let ndiLib = self.ndiLib {
             ndiLib.pointee.send_destroy(sender)
