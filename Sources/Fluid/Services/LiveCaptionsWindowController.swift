@@ -81,6 +81,7 @@ final class LiveCaptionsWindowController {
 
         LiveCaptionsPresentationState.shared.fadeDuration = SettingsStore.shared.liveCaptionsFadeDuration
         LiveCaptionsPresentationState.shared.isVisible = true
+        LiveCaptionsPresentationState.shared.isTextVisible = true
 
         self.startTrackingActivity()
     }
@@ -155,9 +156,9 @@ final class LiveCaptionsWindowController {
         // New words arriving after a silence-triggered fade should bring
         // captions back, using the same (typically snappier) inactivity
         // fade duration rather than the general show/hide one.
-        if !LiveCaptionsPresentationState.shared.isVisible {
+        if !LiveCaptionsPresentationState.shared.isTextVisible {
             LiveCaptionsPresentationState.shared.fadeDuration = SettingsStore.shared.liveCaptionsInactivityFadeDuration
-            LiveCaptionsPresentationState.shared.isVisible = true
+            LiveCaptionsPresentationState.shared.isTextVisible = true
         }
         self.resetInactivityTimer()
     }
@@ -177,7 +178,7 @@ final class LiveCaptionsWindowController {
             // animation it was supposed to wait for had actually finished.
             let fadeDuration = SettingsStore.shared.liveCaptionsInactivityFadeDuration
             LiveCaptionsPresentationState.shared.fadeDuration = fadeDuration
-            LiveCaptionsPresentationState.shared.isVisible = false
+            LiveCaptionsPresentationState.shared.isTextVisible = false
             self?.inactivityWorkItem = nil
 
             // Clear only once the fade-out has fully finished, so the reset
@@ -216,7 +217,7 @@ final class LiveCaptionsWindowController {
         panel.hidesOnDeactivate = false
         panel.animationBehavior = .none
 
-        let hostingView = NSHostingView(rootView: LiveCaptionsView())
+        let hostingView = DraggableHostingView(rootView: LiveCaptionsView())
         hostingView.wantsLayer = true
         hostingView.layer?.backgroundColor = .clear
         panel.contentView = hostingView
@@ -294,6 +295,19 @@ final class LiveCaptionsWindowController {
     }
 }
 
+/// Hosting view that starts a window drag itself on mouse-down. The panel's
+/// isMovableByWindowBackground relies on the hosting view reporting
+/// mouseDownCanMoveWindow, which isn't guaranteed across macOS releases
+/// (dragging stopped working after the macOS 27 update) — performDrag(with:)
+/// is the explicit, OS-independent way to do the same thing.
+final class DraggableHostingView<Content: View>: NSHostingView<Content> {
+    override var mouseDownCanMoveWindow: Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        window?.performDrag(with: event)
+    }
+}
+
 /// Drives the Live Captions content-level fade. LiveCaptionsView observes
 /// this and applies its own `.animation(value:)` to `isVisible`, which is
 /// far more reliable than animating NSWindow.alphaValue for a borderless,
@@ -304,7 +318,11 @@ final class LiveCaptionsWindowController {
 final class LiveCaptionsPresentationState: ObservableObject {
     static let shared = LiveCaptionsPresentationState()
 
+    /// Whole window (background box + text): driven by show()/hide().
     @Published var isVisible: Bool = false
+    /// Text only, with the background box staying put: driven by the idle
+    /// fade, so the window doesn't disappear while no one is speaking.
+    @Published var isTextVisible: Bool = false
     @Published var fadeDuration: Double = 0.25
 
     private init() {}

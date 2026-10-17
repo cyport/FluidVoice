@@ -24,6 +24,11 @@ struct LiveCaptionsView: View {
 
     var body: some View {
         LiveCaptionsTextContentView()
+            // Only the text fades for the idle fade — the background box
+            // stays visible. (Whole-window fades on show/hide are the
+            // outer .opacity below.)
+            .opacity(self.presentation.isTextVisible ? 1 : 0)
+            .animation(.easeInOut(duration: self.presentation.fadeDuration), value: self.presentation.isTextVisible)
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(self.backgroundColor)
@@ -103,7 +108,7 @@ enum LiveCaptionsStyle {
     /// cropped glyph.
     static var contentHeight: CGFloat {
         let probe = Array(repeating: "Wg", count: self.maxLines).joined(separator: "\n")
-        return self.measuredHeight(for: probe) + 12
+        return self.measuredHeight(for: probe) + 16
     }
 
     static var textAreaWidth: CGFloat {
@@ -200,25 +205,6 @@ enum LiveCaptionsStyle {
         return index
     }
 
-    /// Soft fade on the topmost visible line, signaling "more text above" —
-    /// purely cosmetic now that the top line is always shown intact (never
-    /// mid-cropped): matches how macOS/Zoom-style live captions render that
-    /// edge.
-    private static let topFadeHeight: CGFloat = 6
-
-    static var topFadeMask: LinearGradient {
-        let fraction = self.contentHeight > 0 ? min(self.topFadeHeight / self.contentHeight, 0.2) : 0
-        return LinearGradient(
-            stops: [
-                .init(color: .clear, location: 0),
-                .init(color: .black, location: fraction),
-                .init(color: .black, location: 1),
-            ],
-            startPoint: .top,
-            endPoint: .bottom
-        )
-    }
-
     static func styledTextBlock(_ text: Text) -> some View {
         text
             .font(self.font)
@@ -294,10 +280,12 @@ struct LiveCaptionsTextContentView: View {
             )
         }
         .animation(.easeOut(duration: 0.15), value: slice.committed + slice.pending)
+        // Headroom so ascenders (t, l, f…) and the 1pt outline offsets aren't
+        // clipped at the box's top edge.
+        .padding(.top, 4)
         .frame(width: LiveCaptionsStyle.textAreaWidth, height: LiveCaptionsStyle.contentHeight, alignment: .top)
         .clipped()
-        .mask(LiveCaptionsStyle.topFadeMask)
-        // Drawn after the mask, not inside .clipped()'s content, so the true
+        // Drawn after .clipped(), not inside it's content, so the true
         // crop boundary is always fully visible — for diagnosing whether
         // this box is ever actually the thing doing any clipping.
         .overlay(
